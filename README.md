@@ -1,16 +1,68 @@
-# React + Vite
+# 🕹️ Tic-Tac (Multiplayer Tic-Tac-Toe)
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+[![GitHub release (latest by date)](https://img.shields.io/github/v/release/dk3yyyy/tic_tac)](https://github.com/dk3yyyy/tic_tac/releases)
+[![License: ISC](https://img.shields.io/badge/License-ISC-blue.svg)](https://opensource.org/licenses/ISC)
+[![React](https://img.shields.io/badge/Frontend-React%2019-blue?logo=react)](https://react.dev/)
+[![Node.js](https://img.shields.io/badge/Backend-Node.js-green?logo=nodedotjs)](https://nodejs.org/)
 
-Currently, two official plugins are available:
+A premium, modern Tic-Tac-Toe game featuring real-time multiplayer, a built-in economy system, and an AI opponent. Designed with a sleek glassmorphism UI and powered by Socket.io and SQLite.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## ✨ Features
 
-## React Compiler
+- **🎮 Game Modes**:
+  - **Singleplayer**: Battle against an AI with multiple difficulty levels (Easy to Impossible).
+  - **Multiplayer**: Host private rooms or join strangers for a competitive match.
+- **💎 Economy & Shop**:
+  - Earn XP and coins by winning matches.
+  - Exchange tokens for gems to purchase exclusive avatars from the shop.
+  - GDPR-compliant data export and account deletion.
+- **📱 Modern UI**: Fully responsive design with dark/light modes, smooth animations (Framer Motion), and celebratory confetti.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## 🚀 Getting Started
 
-## Expanding the ESLint configuration
+### Prerequisites
+- [Node.js](https://nodejs.org/) (v18 or higher)
+- npm or yarn
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+### Installation
+
+1. **Clone the repository**:
+   ```bash
+   git clone https://github.com/dk3yyyy/tic_tac.git
+   cd tic_tac
+   ```
+
+2. **Install dependencies**:
+   ```bash
+   npm install
+   cd server && npm install && cd ..
+   ```
+
+3. **Set up environment variables**:
+   Create a `.env` file in the `server/` directory based on `.env.example`:
+   ```bash
+   cp server/.env.example server/.env
+   ```
+
+### Running the App
+
+Start both the frontend and backend simultaneously:
+```bash
+npm run dev:all
+```
+
+- **Frontend**: [http://localhost:5173](http://localhost:5173)
+- **Backend**: [http://localhost:3000](http://localhost:3000)
+
+## 🛠️ Tech Stack
+
+- **Frontend**: React 19, Vite, Framer Motion, Lucide React, Axios, Socket.io-client.
+- **Backend**: Node.js, Express 5, Socket.io, Better-SQLite3, Dotenv.
+- **Database**: SQLite (local persistence).
+
+## 📄 License
+
+This project is licensed under the ISC License.
+
+---
+Created with ❤️ by [dk3yyyy](https://github.com/dk3yyyy)
