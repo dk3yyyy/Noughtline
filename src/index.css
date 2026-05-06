@@ -1,0 +1,152 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap');
+
+:root {
+  font-family: 'Outfit', system-ui, -apple-system, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  --accent-teal: #2dd4bf;
+  --accent-pink: #fb7185;
+  --accent-orange: #f97316;
+  --accent-purple: #8b5cf6;
+  --accent-indigo: #6366f1;
+}
+
+[data-theme="dark"] {
+  --bg-top: #2c1a4d;
+  --bg-bottom: #0f0a1f;
+  --text-main: rgba(255, 255, 255, 0.87);
+  --text-scodnary: rgba(255, 255, 255, 0.6);
+  --glass-bg: rgba(255, 255, 255, 0.05);
+  --glass-border: rgba(255, 255, 255, 0.1);
+  --glass-hover: rgba(255, 255, 255, 0.08);
+  --card-bg: #1a1a1a;
+  --nav-bg: rgba(20, 10, 30, 0.8);
+}
+
+[data-theme="light"] {
+  --bg-top: #e0e7ff;
+  --bg-bottom: #f3f4f6;
+  --text-main: #1e1b4b;
+  --text-secondary: #475569;
+  --glass-bg: rgba(255, 255, 255, 0.6);
+  --glass-border: rgba(255, 255, 255, 0.4);
+  --glass-hover: rgba(255, 255, 255, 0.8);
+  --card-bg: #ffffff;
+  --nav-bg: rgba(255, 255, 255, 0.8);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html {
+  min-height: 100%;
+  background: linear-gradient(180deg, var(--bg-top) 0%, var(--bg-bottom) 100%);
+  background-attachment: fixed;
+  transition: background 0.5s ease;
+  overscroll-behavior: none;
+  /* Prevents "white light" bounce on iOS */
+}
+
+body {
+  margin: 0;
+  display: flex;
+  place-items: center;
+  min-width: 320px;
+  min-height: 100vh;
+  color: var(--text-main);
+  overflow-x: hidden;
+  transition: color 0.5s ease;
+}
+
+#root {
+  width: 100%;
+  margin: 0 auto;
+  height: 100vh;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+button {
+  border-radius: 16px;
+  border: 1px solid transparent;
+  padding: 0.8em 1.5em;
+  font-size: 1rem;
+  font-weight: 600;
+  font-family: inherit;
+  background-color: var(--card-bg);
+  /* Updated */
+  color: var(--text-main);
+  /* Updated */
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+button:hover {
+  transform: translateY(-2px);
+  filter: brightness(1.1);
+}
+
+button:active {
+  transform: translateY(0) scale(0.98);
+}
+
+h1,
+h2,
+h3 {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.glass {
+  background: var(--glass-bg);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--glass-border);
+  border-radius: 20px;
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.4s ease-out forwards;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--glass-border);
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--glass-hover);
+}
