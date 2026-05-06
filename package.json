@@ -2,6 +2,7 @@
   "name": "tic-tac",
   "private": true,
   "version": "0.0.0",
+  "description": "A premium multiplayer Tic-Tac-Toe game with economy and AI.",
   "type": "module",
   "scripts": {
     "dev": "vite --host",
