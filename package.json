@@ -1,8 +1,8 @@
 {
-  "name": "tic-tac",
+  "name": "noughtline",
   "private": true,
   "version": "0.0.0",
-  "description": "A premium multiplayer Tic-Tac-Toe game with economy and AI.",
+  "description": "Noughtline — competitive multiplayer tic-tac-toe with AI and private rooms.",
   "type": "module",
   "scripts": {
     "dev": "vite --host",

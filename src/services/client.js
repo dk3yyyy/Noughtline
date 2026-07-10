@@ -2,12 +2,25 @@ import axios from 'axios';
 import { io } from 'socket.io-client';
 import { API_BASE_URL, SOCKET_URL } from '../config';
 
-const TOKEN_KEY = 'plaything_access_token';
+const TOKEN_KEY = 'noughtline_access_token';
+const LEGACY_TOKEN_KEY = 'plaything_access_token';
+
+function getStoredToken() {
+  const current = localStorage.getItem(TOKEN_KEY);
+  if (current) return current;
+
+  const legacy = localStorage.getItem(LEGACY_TOKEN_KEY);
+  if (legacy) {
+    localStorage.setItem(TOKEN_KEY, legacy);
+    localStorage.removeItem(LEGACY_TOKEN_KEY);
+  }
+  return legacy;
+}
 
 export const api = axios.create({ baseURL: API_BASE_URL, timeout: 10000 });
 
 api.interceptors.request.use((request) => {
-  const token = localStorage.getItem(TOKEN_KEY);
+  const token = getStoredToken();
   if (token) request.headers.Authorization = `Bearer ${token}`;
   return request;
 });
@@ -15,7 +28,10 @@ api.interceptors.request.use((request) => {
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) localStorage.removeItem(TOKEN_KEY);
+    if (error.response?.status === 401) {
+      localStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem(LEGACY_TOKEN_KEY);
+    }
     return Promise.reject(error);
   },
 );
@@ -33,7 +49,7 @@ export function getSocket() {
 }
 
 export async function ensureSession() {
-  const existing = localStorage.getItem(TOKEN_KEY);
+  const existing = getStoredToken();
   if (existing) {
     try {
       const { data: user } = await api.get('/api/me');
@@ -56,5 +72,6 @@ export async function ensureSession() {
 
 export function clearSession() {
   localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(LEGACY_TOKEN_KEY);
   if (socket) socket.disconnect();
 }

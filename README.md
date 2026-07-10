@@ -1,6 +1,6 @@
-# Tic-Tac
+# Noughtline
 
-A React, Express, Socket.IO and SQLite Tic-Tac-Toe game with authenticated guest sessions, server-authoritative multiplayer series, persistent progression, and a two-currency cosmetic economy.
+Noughtline is a React, Express, Socket.IO and SQLite Tic-Tac-Toe game with authenticated guest sessions, server-authoritative multiplayer series, persistent progression, and a two-currency cosmetic economy.
 
 ## Current capabilities
 

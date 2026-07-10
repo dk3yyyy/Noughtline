@@ -673,7 +673,7 @@ export default function App() {
 
   // Persisted state
   const [userConfig, setUserConfig] = useState(() => {
-    const saved = localStorage.getItem('plaything_config');
+    const saved = localStorage.getItem('noughtline_config') || localStorage.getItem('plaything_config');
     return saved ? JSON.parse(saved) : { theme: 'dark', sound: true };
   });
 
@@ -772,7 +772,8 @@ export default function App() {
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', userConfig.theme);
-    localStorage.setItem('plaything_config', JSON.stringify(userConfig));
+    localStorage.setItem('noughtline_config', JSON.stringify(userConfig));
+    localStorage.removeItem('plaything_config');
   }, [userConfig]);
 
 
@@ -881,7 +882,7 @@ export default function App() {
       const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(res.data, null, 2));
       const downloadAnchorNode = document.createElement('a');
       downloadAnchorNode.setAttribute("href", dataStr);
-      downloadAnchorNode.setAttribute("download", `plaything_data_${new Date().toISOString()}.json`);
+      downloadAnchorNode.setAttribute("download", `noughtline_data_${new Date().toISOString()}.json`);
       document.body.appendChild(downloadAnchorNode);
       downloadAnchorNode.click();
       downloadAnchorNode.remove();
@@ -982,7 +983,7 @@ export default function App() {
             >
               <div className="home-hero">
                 <span className="home-eyebrow">Server-authoritative arena</span>
-                <h1>Plaything</h1>
+                <h1>Noughtline</h1>
                 <p className="home-subtitle">Classic tic-tac-toe rebuilt for quick duels, private rooms, and competitive rounds.</p>
               </div>
               <div className="button-group">
