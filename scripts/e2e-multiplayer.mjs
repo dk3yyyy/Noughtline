@@ -89,6 +89,15 @@ async function attachPage(cdp, browserContextId, url, viewport) {
   return { targetId, sessionId };
 }
 
+async function setViewport(cdp, page, viewport) {
+  await cdp.send('Emulation.setDeviceMetricsOverride', {
+    width: viewport.width,
+    height: viewport.height,
+    deviceScaleFactor: 1,
+    mobile: viewport.mobile,
+  }, page.sessionId);
+}
+
 async function evaluate(cdp, page, expression) {
   const result = await cdp.send('Runtime.evaluate', {
     expression,
@@ -281,6 +290,52 @@ try {
   const terminalAction = await evaluate(cdp, guest, `Array.from(document.querySelectorAll('button')).find((button) => button.innerText === 'Return home')?.innerText`);
   if (terminalAction !== 'Return home') throw new Error(`Unexpected terminal action: ${terminalAction}`);
   const guestScreenshot = await screenshot(cdp, guest, '_e2e-guest-forfeit-mobile.png');
+
+  const responsiveViewports = [
+    { name: 'small-phone', width: 320, height: 653, mobile: true },
+    { name: 'phone', width: 390, height: 844, mobile: true },
+    { name: 'ipad-portrait', width: 820, height: 1180, mobile: true },
+    { name: 'ipad-landscape', width: 1180, height: 820, mobile: true },
+    { name: 'desktop', width: 1440, height: 900, mobile: false },
+  ];
+  for (const viewport of responsiveViewports) {
+    await setViewport(cdp, guest, viewport);
+    await waitFor(cdp, guest, `window.innerWidth === ${viewport.width}`, `${viewport.name} viewport`);
+    const layout = await evaluate(cdp, guest, `(() => {
+      const visible = [...document.querySelectorAll('button, a, input')].filter((element) => {
+        const rect = element.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      });
+      const horizontalViolations = visible.filter((element) => {
+        const rect = element.getBoundingClientRect();
+        return rect.left < -1 || rect.right > window.innerWidth + 1;
+      }).map((element) => element.getAttribute('aria-label') || element.textContent.trim().slice(0, 40));
+      const touchTargets = [...document.querySelectorAll('.top-bar button, .bottom-nav button')]
+        .filter((element) => {
+          const rect = element.getBoundingClientRect();
+          return rect.width > 0 && rect.height > 0;
+        })
+        .map((element) => ({
+          label: element.getAttribute('aria-label') || element.textContent.trim().slice(0, 40),
+          width: element.getBoundingClientRect().width,
+          height: element.getBoundingClientRect().height,
+        }));
+      return {
+        documentOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        horizontalViolations,
+        touchTargets,
+        boardWidth: document.querySelector('.grid-container')?.getBoundingClientRect().width || 0,
+      };
+    })()`);
+    if (layout.documentOverflow > 1 || layout.horizontalViolations.length > 0) {
+      throw new Error(`${viewport.name} has horizontal overflow: ${JSON.stringify(layout)}`);
+    }
+    if (viewport.width < 900) {
+      const undersized = layout.touchTargets.filter((target) => target.height < 44 || target.width < 44);
+      if (undersized.length > 0) throw new Error(`${viewport.name} has undersized shell targets: ${JSON.stringify(undersized)}`);
+    }
+    if (layout.boardWidth > viewport.width) throw new Error(`${viewport.name} board exceeds viewport width`);
+  }
 
   await clickButton(cdp, host, 'Challenge a player');
   await waitFor(cdp, host, `Array.from(document.querySelectorAll('button')).some((button) => button.innerText === 'Host Game')`, 'post-forfeit multiplayer menu');

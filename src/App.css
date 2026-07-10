@@ -1324,6 +1324,14 @@
   .game-screen { width: min(100%, 1120px); }
 }
 
+/* Preserve compact visuals while giving phone and tablet controls a
+   comfortable touch target. */
+@media (max-width: 899px) {
+  .top-bar { min-height: 56px; }
+  .top-bar button.stat-item,
+  .profile-btn-wrapper { min-height: 44px; }
+}
+
 /* Mobile */
 @media (max-width: 600px) {
   .content {
