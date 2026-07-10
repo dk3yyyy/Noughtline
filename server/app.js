@@ -12,6 +12,30 @@ const { createAuth } = require('./auth');
 const { createEconomy, GEM_PACKAGES } = require('./economy');
 const { RoomManager } = require('./game/roomManager');
 const { Matchmaker } = require('./game/matchmaker');
+const { ActionRateLimiter } = require('./game/actionRateLimiter');
+
+const ERROR_CODE_BY_MESSAGE = Object.freeze({
+  'Invalid room ID': 'INVALID_ROOM_ID',
+  'Room already exists': 'ROOM_EXISTS',
+  'Room not found': 'ROOM_NOT_FOUND',
+  'Room full': 'ROOM_FULL',
+  'Authentication required': 'AUTH_REQUIRED',
+  'No active room to resume': 'NOT_ROOM_MEMBER',
+  'Player is not in this room': 'NOT_ROOM_MEMBER',
+  'Game is not active': 'GAME_NOT_ACTIVE',
+  'Invalid move index': 'INVALID_MOVE',
+  'Not your turn': 'NOT_YOUR_TURN',
+  'Cell is occupied': 'CELL_OCCUPIED',
+});
+
+function gameErrorPayload(result) {
+  return {
+    error: result.error,
+    code: result.code || ERROR_CODE_BY_MESSAGE[result.error] || 'ACTION_FAILED',
+    ...(result.roomId ? { roomId: result.roomId } : {}),
+    ...(Number.isSafeInteger(result.retryAfterMs) ? { retryAfterMs: result.retryAfterMs } : {}),
+  };
+}
 
 function randomRoomId(prefix = '') {
   return `${prefix}${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
@@ -54,7 +78,7 @@ function createRuntime({ config, database, fetchImpl, startTimers = true } = {})
     for (const player of room.players) {
       const isDraw = room.state.seriesWinner === 'Draw';
       const didWin = winner?.id === player.id;
-      const forfeited = completionReason === 'disconnect_forfeit' && !didWin;
+      const forfeited = ['disconnect_forfeit', 'voluntary_forfeit'].includes(completionReason) && !didWin;
       const xp = forfeited ? 0 : isDraw ? 25 : didWin ? 50 : 15;
       const coins = forfeited ? 0 : isDraw ? 5 : didWin ? 10 : 3;
       if (isDraw) {
@@ -80,6 +104,10 @@ function createRuntime({ config, database, fetchImpl, startTimers = true } = {})
 
   const roomManager = new RoomManager({ onSeriesComplete: settleSeries });
   const matchmaker = new Matchmaker();
+  const roomActionLimiter = new ActionRateLimiter({
+    limit: config.roomActionRateLimit,
+    windowMs: config.roomActionRateWindowMs,
+  });
   const app = express();
   const server = http.createServer(app);
   const io = new Server(server, {
@@ -209,59 +237,108 @@ function createRuntime({ config, database, fetchImpl, startTimers = true } = {})
       username: socket.user.username,
       avatar: socket.user.avatar,
     });
+    const emitFailure = (result, callback) => {
+      const payload = gameErrorPayload(result);
+      socket.emit('game_error', payload);
+      callback?.(payload);
+      return payload;
+    };
     const emitResult = (result, callback) => {
-      if (result.error) {
-        socket.emit('game_error', result.error);
-        if (callback) callback({ error: result.error });
-        return;
-      }
+      if (result.error) return emitFailure(result, callback);
       io.to(result.room.id).emit('room_update', result.room);
-      if (callback) callback({ room: result.room });
+      callback?.({ room: result.room });
+      return result;
+    };
+    const guardRoomAction = (callback) => {
+      const limit = roomActionLimiter.consume(`user:${socket.user.id}`);
+      if (limit.allowed) return true;
+      emitFailure({
+        error: 'Too many room actions. Try again shortly.',
+        code: 'RATE_LIMITED',
+        retryAfterMs: limit.retryAfterMs,
+      }, callback);
+      return false;
     };
     const runGameAction = (action, callback) => {
       try {
         emitResult(action(), callback);
       } catch (error) {
         console.error(error);
-        socket.emit('game_error', 'The game action could not be completed');
-        callback?.({ error: 'The game action could not be completed' });
+        emitFailure({ error: 'The game action could not be completed', code: 'ACTION_FAILED' }, callback);
       }
     };
 
     socket.on('create_room', ({ roomId, config: roomConfig } = {}, callback) => {
+      if (!guardRoomAction(callback)) return;
+      const activeRoom = roomManager.findActiveRoomForUser(socket.user.id);
+      if (activeRoom) return emitFailure({
+        error: 'You already have an active room',
+        code: 'ACTIVE_ROOM_EXISTS',
+        roomId: activeRoom.id,
+      }, callback);
+      matchmaker.removeUser(socket.user.id);
       const id = roomId || randomRoomId('ROOM_');
       const created = roomManager.createRoom(id, roomConfig);
-      if (created.error) return callback?.({ error: created.error });
+      if (created.error) return emitFailure(created, callback);
       const joined = roomManager.joinRoom(id, socketPlayer());
+      if (joined.error) {
+        roomManager.deleteRoom(id);
+        return emitFailure(joined, callback);
+      }
       socket.join(id);
       io.to(id).emit('room_update', joined.room);
       return callback?.({ room: joined.room });
     });
 
     socket.on('join_room', ({ roomId } = {}, callback) => {
+      if (!guardRoomAction(callback)) return;
+      matchmaker.removeUser(socket.user.id);
       const result = roomManager.joinRoom(roomId, socketPlayer());
-      if (result.error) return callback?.({ error: result.error });
+      if (result.error) return emitFailure(result, callback);
       socket.join(result.room.id);
       io.to(result.room.id).emit('room_update', result.room);
       return callback?.({ room: result.room });
     });
 
     socket.on('resume_room', ({ roomId } = {}, callback) => {
+      if (!guardRoomAction(callback)) return;
+      matchmaker.removeUser(socket.user.id);
       const result = roomManager.resumeRoom(roomId, socketPlayer());
-      if (result.error) return callback?.({ error: result.error });
+      if (result.error) return emitFailure(result, callback);
       socket.join(result.room.id);
       io.to(result.room.id).emit('room_update', result.room);
       return callback?.({ room: result.room });
+    });
+
+    socket.on('leave_room', ({ roomId } = {}, callback) => {
+      matchmaker.removeUser(socket.user.id);
+      const result = roomManager.leaveRoom(roomId, socket.user.id, socket.id);
+      if (result.error) return emitFailure(result, callback);
+      socket.leave(String(roomId || '').trim().toUpperCase());
+      if (result.room) io.to(result.room.id).emit('room_update', result.room);
+      return callback?.(result);
     });
 
     socket.on('make_move', ({ roomId, index } = {}, callback) => runGameAction(() => roomManager.makeMove(roomId, index, socket.user.id, socket.id), callback));
     socket.on('ready_next_round', ({ roomId } = {}, callback) => runGameAction(() => roomManager.readyForNextRound(roomId, socket.user.id, socket.id), callback));
     socket.on('request_rematch', ({ roomId } = {}, callback) => runGameAction(() => roomManager.requestRematch(roomId, socket.user.id, socket.id), callback));
 
-    socket.on('find_match', () => {
-      matchmaker.addToQueue(socketPlayer());
+    socket.on('find_match', (_payload, callback) => {
+      if (!guardRoomAction(callback)) return;
+      const activeRoom = roomManager.findActiveRoomForUser(socket.user.id);
+      if (activeRoom) return emitFailure({
+        error: 'You already have an active room',
+        code: 'ACTIVE_ROOM_EXISTS',
+        roomId: activeRoom.id,
+      }, callback);
+      const queued = matchmaker.addToQueue(socketPlayer());
+      if (!queued) return emitFailure({ error: 'You are already searching for a match', code: 'ALREADY_MATCHMAKING' }, callback);
+      return callback?.({ queued: true });
     });
-    socket.on('cancel_matchmaking', () => matchmaker.removeFromQueue(socket.id));
+    socket.on('cancel_matchmaking', (_payload, callback) => {
+      matchmaker.removeUser(socket.user.id);
+      callback?.({ cancelled: true });
+    });
 
     socket.on('disconnect', () => {
       matchmaker.removeFromQueue(socket.id);
@@ -282,12 +359,14 @@ function createRuntime({ config, database, fetchImpl, startTimers = true } = {})
         const second = roomManager.joinRoom(roomId, match.player2);
         io.sockets.sockets.get(match.player1.socketId)?.join(roomId);
         io.sockets.sockets.get(match.player2.socketId)?.join(roomId);
-        io.to(match.player1.socketId).emit('match_found', { roomId, opponent: match.player2.username, opponentAvatar: match.player2.avatar, symbol: 'X' });
-        io.to(match.player2.socketId).emit('match_found', { roomId, opponent: match.player1.username, opponentAvatar: match.player1.avatar, symbol: 'O' });
-        io.to(roomId).emit('room_update', second.room || first.room);
+        const publicRoom = second.room || first.room;
+        io.to(match.player1.socketId).emit('match_found', { roomId, opponent: match.player2.username, opponentAvatar: match.player2.avatar, symbol: 'X', room: publicRoom });
+        io.to(match.player2.socketId).emit('match_found', { roomId, opponent: match.player1.username, opponentAvatar: match.player1.avatar, symbol: 'O', room: publicRoom });
+        io.to(roomId).emit('room_update', publicRoom);
       }
       for (const player of matchmaker.expiredPlayers(15_000)) io.to(player.socketId).emit('match_fallback_ai');
       for (const result of roomManager.resolveDisconnectTimeouts()) io.to(result.roomId).emit('room_update', result.room);
+      roomActionLimiter.prune();
       roomManager.removeExpired();
     }, 1000));
   }

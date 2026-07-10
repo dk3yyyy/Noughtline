@@ -50,6 +50,23 @@ test('disconnect forfeit rewards only the remaining player', async (t) => {
   assert.equal(runtime.db.prepare('SELECT COUNT(*) AS count FROM currency_ledger').get().count, 1);
 });
 
+test('voluntary forfeit rewards only the opponent', async (t) => {
+  const runtime = createRuntime({ config: testConfig, database: createDatabase(':memory:'), startTimers: false });
+  t.after(() => runtime.db.close());
+  const first = await newSession(runtime);
+  const second = await newSession(runtime);
+  runtime.roomManager.createRoom('ROOM_VOLUNTARY', { size: 3, rounds: 3 }, { rewardEligible: true });
+  runtime.roomManager.joinRoom('ROOM_VOLUNTARY', { userId: first.user.id, socketId: 'a', username: first.user.username });
+  runtime.roomManager.joinRoom('ROOM_VOLUNTARY', { userId: second.user.id, socketId: 'b', username: second.user.username });
+  runtime.roomManager.leaveRoom('ROOM_VOLUNTARY', first.user.id, 'a');
+
+  const forfeiter = runtime.db.prepare('SELECT losses, coins, xp FROM users WHERE id = ?').get(first.user.id);
+  const winner = runtime.db.prepare('SELECT wins, coins, xp FROM users WHERE id = ?').get(second.user.id);
+  assert.deepEqual(forfeiter, { losses: 1, coins: 0, xp: 0 });
+  assert.deepEqual(winner, { wins: 1, coins: 10, xp: 50 });
+  assert.equal(runtime.db.prepare('SELECT COUNT(*) AS count FROM currency_ledger').get().count, 1);
+});
+
 test('private rooms persist results but cannot mint progression or currency', async (t) => {
   const runtime = createRuntime({ config: testConfig, database: createDatabase(':memory:'), startTimers: false });
   t.after(() => runtime.db.close());
@@ -97,6 +114,7 @@ test('authenticated socket series persists once and grants server-side rewards',
 
   const invalid = await emitAck(a, 'make_move', { roomId: 'ROOM_E2E', index: 99 });
   assert.equal(invalid.error, 'Invalid move index');
+  assert.equal(invalid.code, 'INVALID_MOVE');
   assert.equal(runtime.roomManager.getRoom('ROOM_E2E').state.board.length, 9);
 
   await emitAck(a, 'make_move', { roomId: 'ROOM_E2E', index: 0 });
@@ -151,6 +169,7 @@ test('authenticated member can resume a room but a non-member cannot', async (t)
 
   const denied = await emitAckWithin(c, 'resume_room', { roomId: 'ROOM_RESUME' });
   assert.equal(denied.error, 'No active room to resume');
+  assert.equal(denied.code, 'NOT_ROOM_MEMBER');
 
   resumed = createClient(url, { auth: { token: first.token }, transports: ['websocket'], reconnection: false });
   await new Promise((resolve, reject) => {
@@ -161,4 +180,80 @@ test('authenticated member can resume a room but a non-member cannot', async (t)
   assert.equal(result.room.state.status, 'active');
   assert.equal(result.room.state.disconnectDeadline, null);
   assert.equal(result.room.players.find((player) => player.id === first.user.id).connected, true);
+});
+
+test('socket lifecycle enforces one room and voluntary leave semantics with coded errors', async (t) => {
+  const runtime = createRuntime({ config: testConfig, database: createDatabase(':memory:'), startTimers: false });
+  await new Promise((resolve) => runtime.server.listen(0, resolve));
+  const url = `http://127.0.0.1:${runtime.server.address().port}`;
+  const first = await newSession(runtime);
+  const second = await newSession(runtime);
+  const a = createClient(url, { auth: { token: first.token }, transports: ['websocket'], reconnection: false });
+  const b = createClient(url, { auth: { token: second.token }, transports: ['websocket'], reconnection: false });
+  await Promise.all([a, b].map((client) => new Promise((resolve, reject) => {
+    client.on('connect', resolve);
+    client.on('connect_error', reject);
+  })));
+  t.after(async () => {
+    a.close();
+    b.close();
+    await new Promise((resolve) => runtime.io.close(resolve));
+    await new Promise((resolve) => runtime.server.close(resolve));
+    runtime.db.close();
+  });
+
+  await emitAckWithin(a, 'create_room', { roomId: 'ROOM_PRIMARY', config: { size: 3, rounds: 3 } });
+  const duplicate = await emitAckWithin(a, 'create_room', { roomId: 'ROOM_ORPHAN', config: { size: 3, rounds: 3 } });
+  assert.equal(duplicate.code, 'ACTIVE_ROOM_EXISTS');
+  assert.equal(duplicate.roomId, 'ROOM_PRIMARY');
+  assert.equal(runtime.roomManager.getRoom('ROOM_ORPHAN'), undefined);
+
+  const matchmaking = await emitAckWithin(a, 'find_match', {});
+  assert.equal(matchmaking.code, 'ACTIVE_ROOM_EXISTS');
+  assert.equal(runtime.matchmaker.queue.length, 0);
+
+  await emitAckWithin(b, 'join_room', { roomId: 'ROOM_PRIMARY' });
+  const opponentUpdate = new Promise((resolve) => b.once('room_update', resolve));
+  const left = await emitAckWithin(a, 'leave_room', { roomId: 'ROOM_PRIMARY' });
+  assert.equal(left.room.state.status, 'complete');
+  assert.equal(left.room.state.seriesWinner, 'O');
+  assert.equal(left.room.state.completionReason, 'voluntary_forfeit');
+  assert.equal((await opponentUpdate).state.completionReason, 'voluntary_forfeit');
+  assert.equal(runtime.db.prepare('SELECT COUNT(*) AS count FROM series_results').get().count, 1);
+
+  const next = await emitAckWithin(a, 'create_room', { roomId: 'ROOM_NEXT', config: { size: 3, rounds: 3 } });
+  assert.equal(next.room.id, 'ROOM_NEXT');
+  const removed = await emitAckWithin(a, 'leave_room', { roomId: 'ROOM_NEXT' });
+  assert.equal(removed.deleted, true);
+  assert.equal(runtime.roomManager.getRoom('ROOM_NEXT'), undefined);
+});
+
+test('room lifecycle rate limit is keyed by authenticated user and returns retry metadata', async (t) => {
+  const runtime = createRuntime({
+    config: { ...testConfig, roomActionRateLimit: 2, roomActionRateWindowMs: 60_000 },
+    database: createDatabase(':memory:'),
+    startTimers: false,
+  });
+  await new Promise((resolve) => runtime.server.listen(0, resolve));
+  const url = `http://127.0.0.1:${runtime.server.address().port}`;
+  const first = await newSession(runtime);
+  const a = createClient(url, { auth: { token: first.token }, transports: ['websocket'], reconnection: false });
+  await new Promise((resolve, reject) => {
+    a.on('connect', resolve);
+    a.on('connect_error', reject);
+  });
+  t.after(async () => {
+    a.close();
+    await new Promise((resolve) => runtime.io.close(resolve));
+    await new Promise((resolve) => runtime.server.close(resolve));
+    runtime.db.close();
+  });
+
+  await emitAckWithin(a, 'create_room', { roomId: 'ROOM_LIMIT', config: { size: 3, rounds: 3 } });
+  await emitAckWithin(a, 'resume_room', { roomId: 'ROOM_LIMIT' });
+  const limited = await emitAckWithin(a, 'resume_room', { roomId: 'ROOM_LIMIT' });
+  assert.equal(limited.code, 'RATE_LIMITED');
+  assert.equal(limited.error, 'Too many room actions. Try again shortly.');
+  assert.equal(Number.isSafeInteger(limited.retryAfterMs), true);
+  assert.equal(limited.retryAfterMs > 0, true);
 });

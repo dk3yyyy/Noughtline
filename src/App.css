@@ -1577,6 +1577,44 @@
 
 .share-feedback.error { color: var(--danger); }
 
+.btn-danger {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 1px solid #ff7777;
+  border-radius: 8px;
+  background: var(--danger);
+  color: #fff;
+  font-weight: 800;
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--danger) 28%, transparent);
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 82%, #000);
+}
+
+.btn-danger:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 3px;
+  box-shadow: 0 0 0 6px color-mix(in srgb, var(--danger) 55%, transparent);
+}
+
+.modal-heading-icon.danger {
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+
+.game-action-error {
+  margin: 0;
+  color: var(--danger);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  text-align: center;
+}
+
 .cancelled-status {
   display: inline-flex;
   min-height: 28px;

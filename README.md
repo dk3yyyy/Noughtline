@@ -8,6 +8,8 @@ Noughtline is a React, Express, Socket.IO and SQLite Tic-Tac-Toe game with authe
 - Authenticated real-time private rooms and matchmaking; private rooms are unranked and cannot mint progression or currency.
 - Server-validated moves, turns, board bounds, best-of-1/3/5 rounds and rematches.
 - Reconnection revokes the old socket and allows a 30-second grace period before one-time forfeit settlement.
+- Shareable room invitations, refresh recovery, explicit leave/forfeit confirmation, and one-active-room enforcement.
+- Stable multiplayer error codes and per-user lifecycle rate limits; leaving a room is never rate-limited.
 - Transactional match persistence and one-time server-issued XP, win/loss/draw, streak and Coin rewards for eligible matchmaking games.
 - Persistent Coins and Gems with an immutable currency ledger.
 - Coin- and Gem-priced avatar inventory with server-side ownership and balance checks.
@@ -74,7 +76,7 @@ npm audit --omit=dev
 npm audit --prefix server --omit=dev
 ```
 
-The tests include unauthenticated route rejection, removal of the fake deposit path, ledger idempotency, payment verification, move bounds, multi-round settlement and an authenticated two-client Socket.IO game.
+The tests cover unauthenticated route rejection, removal of the fake deposit path, ledger idempotency, payment verification, move bounds, multi-round settlement, invite/reconnect recovery, one-active-room enforcement, voluntary forfeits, lifecycle limits, and isolated-browser multiplayer flows.
 
 ## Production requirements
 
@@ -87,7 +89,7 @@ Before deployment:
 5. Back up SQLite or migrate to PostgreSQL; use Redis or another shared state store before running multiple Socket.IO instances.
 6. Run CI and a Paystack test-mode transaction before enabling live payments.
 
-See [`docs/SECURE_FOUNDATION_PLAN.md`](docs/SECURE_FOUNDATION_PLAN.md) for architecture decisions, acceptance criteria and deferred features.
+See [`docs/SECURE_FOUNDATION_PLAN.md`](docs/SECURE_FOUNDATION_PLAN.md), [`docs/PLAYER_LIFECYCLE_PLAN.md`](docs/PLAYER_LIFECYCLE_PLAN.md), and [`docs/SHARED_MULTIPLAYER_STATE_PLAN.md`](docs/SHARED_MULTIPLAYER_STATE_PLAN.md) for architecture decisions, acceptance criteria, and the horizontal-scaling migration path.
 
 ## Deferred features
 

@@ -143,13 +143,87 @@ test('disconnectAll updates every room associated with a socket', () => {
   const manager = new RoomManager();
   joinTwo(manager, 'ROOM_FIRST');
   manager.createRoom('ROOM_SECOND', { size: 3, rounds: 3 });
-  manager.joinRoom('ROOM_SECOND', { userId: 1, socketId: 'a', username: 'A' });
   manager.joinRoom('ROOM_SECOND', { userId: 3, socketId: 'c', username: 'C' });
+  const legacyRoom = manager.getRoom('ROOM_SECOND');
+  legacyRoom.players.push({ id: 1, socketId: 'a', username: 'A', symbol: 'O', connected: true });
+  manager.syncConnectionState(legacyRoom, { secondPlayerJoined: true });
 
   const results = manager.disconnectAll('a');
   assert.equal(results.length, 2);
   assert.equal(manager.getRoom('ROOM_FIRST').players.find((player) => player.id === 1).connected, false);
   assert.equal(manager.getRoom('ROOM_SECOND').players.find((player) => player.id === 1).connected, false);
+});
+
+test('finds active membership and rejects joining a different nonterminal room', () => {
+  const manager = new RoomManager();
+  manager.createRoom('ROOM_FIRST', { size: 3, rounds: 3 });
+  manager.joinRoom('ROOM_FIRST', { userId: 1, socketId: 'a', username: 'A' });
+  manager.createRoom('ROOM_SECOND', { size: 3, rounds: 3 });
+
+  assert.equal(manager.findActiveRoomForUser(1).id, 'ROOM_FIRST');
+  const rejected = manager.joinRoom('ROOM_SECOND', { userId: 1, socketId: 'a', username: 'A' });
+  assert.equal(rejected.code, 'ACTIVE_ROOM_EXISTS');
+  assert.equal(rejected.roomId, 'ROOM_FIRST');
+  assert.equal(manager.getRoom('ROOM_SECOND').players.length, 0);
+});
+
+test('leaving a one-player waiting room deletes it without settlement', () => {
+  const settlements = [];
+  const manager = new RoomManager({ onSeriesComplete: (...args) => settlements.push(args) });
+  manager.createRoom('ROOM_WAIT', { size: 3, rounds: 3 });
+  manager.joinRoom('ROOM_WAIT', { userId: 1, socketId: 'a', username: 'A' });
+
+  const result = manager.leaveRoom('ROOM_WAIT', 1, 'a');
+  assert.equal(result.deleted, true);
+  assert.equal(result.roomId, 'ROOM_WAIT');
+  assert.equal(manager.getRoom('ROOM_WAIT'), undefined);
+  assert.equal(settlements.length, 0);
+});
+
+test('leaving a live room forfeits exactly once to the opponent', () => {
+  const settlements = [];
+  const manager = new RoomManager({ onSeriesComplete: (room, history) => settlements.push({ room, history }) });
+  joinTwo(manager);
+
+  const result = manager.leaveRoom('ROOM_TEST', 1, 'a');
+  assert.equal(result.room.state.status, 'complete');
+  assert.equal(result.room.state.seriesWinner, 'O');
+  assert.equal(result.room.state.completionReason, 'voluntary_forfeit');
+  assert.equal(result.room.state.score.O, 1);
+  assert.equal(settlements.length, 1);
+  assert.equal(settlements[0].history.at(-1).reason, 'voluntary_forfeit');
+
+  const repeated = manager.leaveRoom('ROOM_TEST', 1, 'a');
+  assert.equal(repeated.code, 'NOT_ROOM_MEMBER');
+  assert.equal(settlements.length, 1);
+});
+
+test('stale sockets cannot leave after reconnect rotates authority', () => {
+  const manager = new RoomManager();
+  joinTwo(manager);
+  manager.joinRoom('ROOM_TEST', { userId: 1, socketId: 'a-new', username: 'A' });
+
+  const rejected = manager.leaveRoom('ROOM_TEST', 1, 'a');
+  assert.equal(rejected.code, 'NOT_ROOM_MEMBER');
+  assert.equal(manager.getRoom('ROOM_TEST').state.status, 'active');
+});
+
+test('leaving a terminal room only acknowledges it and permits a new room', () => {
+  const settlements = [];
+  const manager = new RoomManager({ onSeriesComplete: (room) => settlements.push(room) });
+  manager.createRoom('ROOM_TEST', { size: 3, rounds: 1 });
+  manager.joinRoom('ROOM_TEST', { userId: 1, socketId: 'a', username: 'A' });
+  manager.joinRoom('ROOM_TEST', { userId: 2, socketId: 'b', username: 'B' });
+  playXWin(manager);
+
+  const acknowledged = manager.leaveRoom('ROOM_TEST', 1, 'a');
+  assert.equal(acknowledged.acknowledged, true);
+  assert.equal(acknowledged.room.state.status, 'complete');
+  assert.equal(settlements.length, 1);
+
+  manager.createRoom('ROOM_NEW', { size: 3, rounds: 3 });
+  const joined = manager.joinRoom('ROOM_NEW', { userId: 1, socketId: 'a', username: 'A' });
+  assert.equal(joined.room.id, 'ROOM_NEW');
 });
 
 test('plays a best-of-three series and settles exactly once', () => {

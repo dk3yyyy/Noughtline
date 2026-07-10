@@ -14,6 +14,10 @@ class Matchmaker {
     this.queue = this.queue.filter((player) => player.socketId !== socketId);
   }
 
+  removeUser(userId) {
+    this.queue = this.queue.filter((player) => player.userId !== userId);
+  }
+
   findMatch() {
     while (this.queue.length >= 2) {
       const player1 = this.queue.shift();

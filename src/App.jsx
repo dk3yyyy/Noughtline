@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { api, clearSession, ensureSession, getSocket } from './services/client';
 import { clearActiveRoom, createInviteUrl, getInviteRoomId, normalizeRoomId, readActiveRoom, saveActiveRoom } from './services/rooms';
 import {
@@ -22,7 +22,9 @@ import {
   Check,
   Copy,
   Link2,
-  Share2
+  Share2,
+  AlertTriangle,
+  LogOut
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import confetti from 'canvas-confetti';
@@ -530,12 +532,75 @@ const SearchingMatchModal = ({ show, onCancel }) => {
   );
 };
 
+const LeaveRoomModal = ({ show, gameStatus, hasOpponent, pending, onCancel, onConfirm }) => {
+  if (!show) return null;
+  const abandonsInvite = gameStatus === 'waiting' && !hasOpponent;
+  const title = abandonsInvite ? 'Leave waiting room?' : 'Forfeit this match?';
+  const description = abandonsInvite
+    ? 'This closes the room and the invite link will stop working.'
+    : 'Your opponent will immediately win the series. This cannot be undone.';
+
+  return (
+    <div className="modal-backdrop" onClick={pending ? undefined : onCancel}>
+      <motion.div
+        className="modal-content multiplayer-menu leave-room-dialog"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="leave-room-title"
+        aria-describedby="leave-room-description"
+        onClick={event => event.stopPropagation()}
+        onKeyDown={event => { if (event.key === 'Escape' && !pending) onCancel(); }}
+        initial={{ scale: 0.96, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+      >
+        <div className="modal-heading-icon danger"><AlertTriangle size={21} /></div>
+        <h2 id="leave-room-title" className="modal-title">{title}</h2>
+        <p id="leave-room-description" className="modal-description">{description}</p>
+        <div className="btn-stack">
+          <button type="button" className="btn-danger" onClick={onConfirm} disabled={pending} autoFocus>
+            <LogOut size={17} /> {pending ? 'Leaving…' : abandonsInvite ? 'Leave room' : 'Forfeit match'}
+          </button>
+          <button type="button" className="btn-gray" onClick={onCancel} disabled={pending}>Stay in match</button>
+        </div>
+      </motion.div>
+    </div>
+  );
+};
+
+const ActiveRoomModal = ({ roomId, pending, onResume, onCopy, onClose }) => {
+  if (!roomId) return null;
+  return (
+    <div className="modal-backdrop" onClick={pending ? undefined : onClose}>
+      <motion.div
+        className="modal-content multiplayer-menu"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="active-room-title"
+        aria-describedby="active-room-description"
+        onClick={event => event.stopPropagation()}
+        initial={{ scale: 0.96, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+      >
+        <div className="modal-heading-icon"><Swords size={21} /></div>
+        <h2 id="active-room-title" className="modal-title">You already have a match</h2>
+        <p id="active-room-description" className="modal-description">Resume your current room before starting another.</p>
+        <div className="invite-code-panel"><span>Active room</span><strong>{roomId}</strong></div>
+        <div className="btn-stack">
+          <button type="button" className="btn-pink" onClick={onResume} disabled={pending}>{pending ? 'Resuming…' : 'Resume match'}</button>
+          <button type="button" className="btn-gray" onClick={onCopy}><Copy size={17} /> Copy invite</button>
+          <button type="button" className="btn-gray" onClick={onClose} disabled={pending}>Close</button>
+        </div>
+      </motion.div>
+    </div>
+  );
+};
+
 // --- Game Logic Hooks ---
 
 const socket = getSocket();
 
 const useTicTacToe = (gameConfig, setGameConfig, sounds, user) => {
-  const { size: boardSize, mode, roomId, difficulty } = gameConfig;
+  const { size: boardSize, mode, roomId, difficulty, roomSnapshot } = gameConfig;
   const [board, setBoard] = useState(Array(boardSize * boardSize).fill(null));
   const [isXNext, setIsXNext] = useState(true);
   const [winner, setWinner] = useState(null);
@@ -548,6 +613,7 @@ const useTicTacToe = (gameConfig, setGameConfig, sounds, user) => {
   const [roomPlayers, setRoomPlayers] = useState([]);
   const [disconnectDeadline, setDisconnectDeadline] = useState(null);
   const [completionReason, setCompletionReason] = useState(null);
+  const [actionError, setActionError] = useState('');
 
   useEffect(() => {
     // Reset Logic
@@ -562,6 +628,7 @@ const useTicTacToe = (gameConfig, setGameConfig, sounds, user) => {
     setRoomPlayers([]);
     setDisconnectDeadline(null);
     setCompletionReason(null);
+    setActionError('');
     if (mode === 'singleplayer') setMySymbol('X');
 
     if (mode === 'multiplayer' && roomId) {
@@ -576,6 +643,7 @@ const useTicTacToe = (gameConfig, setGameConfig, sounds, user) => {
         setRoomPlayers(room.players || []);
         setDisconnectDeadline(room.state.disconnectDeadline || null);
         setCompletionReason(room.state.completionReason || null);
+        setActionError('');
         setIsActionPending(false);
         saveActiveRoom(localStorage, room.id);
 
@@ -596,19 +664,19 @@ const useTicTacToe = (gameConfig, setGameConfig, sounds, user) => {
 
       const handleGameError = (error) => {
         setIsActionPending(false);
-        alert(error);
+        setActionError(typeof error === 'string' ? error : error?.error || 'The game action could not be completed.');
       };
 
       socket.on('room_update', handleRoomUpdate);
       socket.on('game_error', handleGameError);
-      socket.emit('join_room', { roomId });
+      if (roomSnapshot?.id === roomId) handleRoomUpdate(roomSnapshot);
 
       return () => {
         socket.off('room_update', handleRoomUpdate);
         socket.off('game_error', handleGameError);
       };
     }
-  }, [boardSize, mode, roomId, setGameConfig, user.id, user.username]);
+  }, [boardSize, mode, roomId, roomSnapshot, setGameConfig, user.id, user.username]);
 
   const calculateWinner = (squares) => {
     const lines = [];
@@ -785,7 +853,7 @@ const useTicTacToe = (gameConfig, setGameConfig, sounds, user) => {
   return {
     board, handleClick, winner, winningLine, isXNext, resetGame, mySymbol,
     gameStatus, round, score, readyNextRound, requestRematch, roomPlayers,
-    disconnectDeadline, completionReason,
+    disconnectDeadline, completionReason, actionError,
   };
 };
 
@@ -804,6 +872,11 @@ export default function App() {
   const [showJoinModal, setShowJoinModal] = useState(() => Boolean(getInviteRoomId(window.location.pathname)));
   const [recoveryMessage, setRecoveryMessage] = useState('');
   const [isSearching, setIsSearching] = useState(false);
+  const [showLeaveRoom, setShowLeaveRoom] = useState(false);
+  const [leavePending, setLeavePending] = useState(false);
+  const [activeRoomConflict, setActiveRoomConflict] = useState(null);
+  const [activeRoomPending, setActiveRoomPending] = useState(false);
+  const skipRecoveryOnce = useRef(false);
 
   // Persisted state
   const [userConfig, setUserConfig] = useState(() => {
@@ -870,11 +943,20 @@ export default function App() {
 
   // Matchmaking Listeners
   useEffect(() => {
-    socket.on('match_found', ({ roomId, opponent, opponentAvatar }) => {
+    socket.on('match_found', ({ roomId, opponent, opponentAvatar, room }) => {
       saveActiveRoom(localStorage, roomId);
       setIsSearching(false);
       setShowMultiplayerMenu(false);
-      setGameConfig(prev => ({ ...prev, mode: 'multiplayer', roomId, size: 3, opponentAvatar, opponentName: opponent }));
+      setGameConfig(prev => ({
+        ...prev,
+        mode: 'multiplayer',
+        roomId,
+        size: room?.config?.size || 3,
+        rounds: room?.config?.rounds || 3,
+        opponentAvatar,
+        opponentName: opponent,
+        roomSnapshot: room || null,
+      }));
       setView('GAME');
     });
 
@@ -906,11 +988,58 @@ export default function App() {
   const {
     board, handleClick, winner, winningLine, isXNext, resetGame, mySymbol,
     gameStatus, round, score, readyNextRound, requestRematch, roomPlayers,
-    disconnectDeadline, completionReason,
+    disconnectDeadline, completionReason, actionError,
   } = useTicTacToe(gameConfig, setGameConfig, sounds, user);
   const opponentPlayer = roomPlayers.find(player => player.id !== user.id);
   const opponentDisconnected = gameConfig.mode === 'multiplayer' && opponentPlayer?.connected === false;
   const [disconnectSeconds, setDisconnectSeconds] = useState(0);
+
+  const enterMultiplayerRoom = useCallback((room, message = '') => {
+    saveActiveRoom(localStorage, room.id);
+    setGameConfig(previous => ({
+      ...previous,
+      mode: 'multiplayer',
+      roomId: room.id,
+      size: room.config.size,
+      rounds: room.config.rounds,
+      roomSnapshot: room,
+    }));
+    setRecoveryMessage(message);
+    setActiveRoomConflict(null);
+    setShowJoinModal(false);
+    setShowMultiplayerMenu(false);
+    setView('GAME');
+  }, []);
+
+  const clearRoomAndReturnHome = useCallback(() => {
+    clearActiveRoom(localStorage);
+    setRecoveryMessage('');
+    setShowLeaveRoom(false);
+    setActiveRoomConflict(null);
+    setGameConfig(previous => ({ ...previous, roomId: null, opponentName: null, opponentAvatar: null, roomSnapshot: null }));
+    setActiveTab('home');
+    setView('HOME');
+  }, []);
+
+  const handleLifecycleFailure = (result) => {
+    if (result?.code === 'ACTIVE_ROOM_EXISTS' && result.roomId) {
+      setActiveRoomConflict(result.roomId);
+      setRecoveryMessage('');
+      setShowHostModal(false);
+      setShowJoinModal(false);
+      setShowMultiplayerMenu(false);
+      setIsSearching(false);
+      return;
+    }
+    if (result?.code === 'RATE_LIMITED') {
+      const seconds = Math.max(1, Math.ceil((result.retryAfterMs || 1000) / 1000));
+      setRecoveryMessage(`Too many room actions. Try again in ${seconds}s.`);
+      setIsSearching(false);
+      return;
+    }
+    setRecoveryMessage(roomErrorMessage(result?.error));
+    setIsSearching(false);
+  };
 
   useEffect(() => {
     if (!disconnectDeadline) {
@@ -924,7 +1053,11 @@ export default function App() {
   }, [disconnectDeadline]);
 
   useEffect(() => {
-    if (isConnected !== true || !user.id || showJoinModal) return;
+    if (isConnected !== true || !user.id || showJoinModal || activeRoomConflict) return;
+    if (skipRecoveryOnce.current) {
+      skipRecoveryOnce.current = false;
+      return;
+    }
     const activeRoom = readActiveRoom(localStorage);
     if (!activeRoom) return;
 
@@ -934,6 +1067,11 @@ export default function App() {
         return;
       }
       if (result?.error) {
+        if (result.code === 'RATE_LIMITED') {
+          const seconds = Math.max(1, Math.ceil((result.retryAfterMs || 1000) / 1000));
+          setRecoveryMessage(`Room recovery is temporarily limited. Try again in ${seconds}s.`);
+          return;
+        }
         clearActiveRoom(localStorage);
         setGameConfig(previous => previous.roomId === activeRoom.roomId
           ? { ...previous, roomId: null, opponentName: null, opponentAvatar: null }
@@ -943,19 +1081,13 @@ export default function App() {
         return;
       }
 
-      const room = result.room;
-      saveActiveRoom(localStorage, room.id);
-      setRecoveryMessage('Match restored.');
-      setGameConfig(previous => ({
-        ...previous,
-        mode: 'multiplayer',
-        roomId: room.id,
-        size: room.config.size,
-        rounds: room.config.rounds,
-      }));
-      setView('GAME');
+      enterMultiplayerRoom(result.room, 'Match restored.');
     });
-  }, [isConnected, user.id, showJoinModal]);
+  }, [isConnected, user.id, showJoinModal, activeRoomConflict, enterMultiplayerRoom]);
+
+  useEffect(() => {
+    if (gameStatus === 'complete' || gameStatus === 'cancelled') setRecoveryMessage('');
+  }, [gameStatus]);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', userConfig.theme);
@@ -999,11 +1131,11 @@ export default function App() {
   const handleHostGame = (rounds, size) => {
     socket.emit('create_room', { config: { size, rounds } }, (result) => {
       if (result?.error) {
-        alert(result.error);
+        handleLifecycleFailure(result);
         return;
       }
       saveActiveRoom(localStorage, result.room.id);
-      setGameConfig(previous => ({ ...previous, mode: 'multiplayer', roomId: result.room.id, size, rounds }));
+      setGameConfig(previous => ({ ...previous, mode: 'multiplayer', roomId: result.room.id, size, rounds, roomSnapshot: result.room }));
       setRecoveryMessage('');
       setShowHostModal(false);
       setShowGameCreatedModal(true);
@@ -1044,40 +1176,105 @@ export default function App() {
         return;
       }
       if (result?.error) {
+        if (result.code === 'ACTIVE_ROOM_EXISTS' || result.code === 'RATE_LIMITED') handleLifecycleFailure(result);
         resolve(result);
         return;
       }
 
       const room = result.room;
-      saveActiveRoom(localStorage, room.id);
-      setGameConfig(previous => ({
-        ...previous,
-        mode: 'multiplayer',
-        roomId: room.id,
-        size: room.config.size,
-        rounds: room.config.rounds,
-      }));
-      setRecoveryMessage('');
-      setShowJoinModal(false);
+      enterMultiplayerRoom(room);
       setJoinInitialCode('');
-      setShowMultiplayerMenu(false);
       clearInvitePath();
-      setView('GAME');
       resolve({ room });
     });
   });
 
-  const handleAcknowledgeTerminalRoom = () => {
-    clearActiveRoom(localStorage);
+  const performLeaveRoom = () => {
+    if (!gameConfig.roomId || leavePending) return;
+    if (!socket.connected) {
+      setRecoveryMessage('Reconnect to Noughtline before leaving this room.');
+      return;
+    }
+    setLeavePending(true);
+    socket.timeout(8_000).emit('leave_room', { roomId: gameConfig.roomId }, (timeoutError, result) => {
+      setLeavePending(false);
+      if (timeoutError) {
+        setRecoveryMessage('The room did not respond in time. Your match was not forfeited.');
+        return;
+      }
+      if (result?.error) {
+        handleLifecycleFailure(result);
+        return;
+      }
+      clearRoomAndReturnHome();
+    });
+  };
+
+  const handleGameBack = () => {
+    if (gameConfig.mode !== 'multiplayer') {
+      setActiveTab('home');
+      setView('HOME');
+      return;
+    }
+    if (gameStatus === 'complete' || gameStatus === 'cancelled') {
+      performLeaveRoom();
+      return;
+    }
     setRecoveryMessage('');
-    setGameConfig(previous => ({ ...previous, roomId: null, opponentName: null, opponentAvatar: null }));
+    setShowLeaveRoom(true);
+  };
+
+  const handleResumeActiveRoom = () => {
+    if (!activeRoomConflict || activeRoomPending) return;
+    setActiveRoomPending(true);
+    socket.timeout(8_000).emit('resume_room', { roomId: activeRoomConflict }, (timeoutError, result) => {
+      setActiveRoomPending(false);
+      if (timeoutError) {
+        setRecoveryMessage('The active room did not respond in time. Try again.');
+        return;
+      }
+      if (result?.error) {
+        handleLifecycleFailure(result);
+        return;
+      }
+      skipRecoveryOnce.current = true;
+      enterMultiplayerRoom(result.room, 'Match restored.');
+    });
+  };
+
+  const handleCloseActiveRoom = () => {
+    skipRecoveryOnce.current = true;
+    setActiveRoomConflict(null);
     setActiveTab('home');
     setView('HOME');
   };
 
+  const handleCopyActiveInvite = async () => {
+    if (!activeRoomConflict) return;
+    try {
+      await navigator.clipboard.writeText(createInviteUrl(activeRoomConflict));
+      setRecoveryMessage('Active-room invite copied.');
+    } catch {
+      setRecoveryMessage(`Copy failed. Share room code ${activeRoomConflict}.`);
+    }
+  };
+
+  const handleAcknowledgeTerminalRoom = performLeaveRoom;
+
   const handlePlayStranger = () => {
+    if (!socket.connected) {
+      setRecoveryMessage('Reconnect to Noughtline before matchmaking.');
+      return;
+    }
     setIsSearching(true);
-    socket.emit('find_match');
+    socket.timeout(8_000).emit('find_match', {}, (timeoutError, result) => {
+      if (timeoutError) {
+        setIsSearching(false);
+        setRecoveryMessage('Matchmaking did not respond. Try again.');
+        return;
+      }
+      if (result?.error) handleLifecycleFailure(result);
+    });
   };
 
   const handleCancelSearch = () => {
@@ -1199,6 +1396,23 @@ export default function App() {
       <SearchingMatchModal
         show={isSearching}
         onCancel={handleCancelSearch}
+      />
+
+      <LeaveRoomModal
+        show={showLeaveRoom}
+        gameStatus={gameStatus}
+        hasOpponent={Boolean(opponentPlayer)}
+        pending={leavePending}
+        onCancel={() => setShowLeaveRoom(false)}
+        onConfirm={performLeaveRoom}
+      />
+
+      <ActiveRoomModal
+        roomId={activeRoomConflict}
+        pending={activeRoomPending}
+        onResume={handleResumeActiveRoom}
+        onCopy={handleCopyActiveInvite}
+        onClose={handleCloseActiveRoom}
       />
 
       <BuyGemsModal
@@ -1425,7 +1639,7 @@ export default function App() {
             >
               <div className="game-info-panel">
                 <div className="game-header">
-                  <button className="back-btn" aria-label="Return home" onClick={() => { setActiveTab('home'); setView('HOME'); }}>
+                  <button className="back-btn" aria-label={gameConfig.mode === 'multiplayer' ? 'Leave match' : 'Return home'} onClick={handleGameBack}>
                     <ChevronLeft size={28} />
                   </button>
                   <div className="mode-badge glass">MODE: {gameConfig.mode === 'multiplayer' ? `ROOM: ${gameConfig.roomId}` : gameConfig.difficulty.toUpperCase()}</div>
@@ -1468,7 +1682,7 @@ export default function App() {
                       animate={{ scale: 1.08 }}
                       className="winner-text"
                     >
-                      {completionReason === 'disconnect_forfeit'
+                      {['disconnect_forfeit', 'voluntary_forfeit'].includes(completionReason)
                         ? (winner === mySymbol ? 'Opponent forfeited — you win!' : 'You forfeited — opponent wins.')
                         : winner === 'Draw' ? "It's a Draw!" : `${winner === mySymbol ? 'You' : 'Opponent'} Won!`}
                     </motion.span>
@@ -1476,6 +1690,7 @@ export default function App() {
                     <span className="animate-pulse">{isXNext === (mySymbol === 'X') ? "> Your Turn" : "> Opponent Turn"}</span>
                   )}
                 </div>
+                {actionError && <p className="game-action-error" role="alert">{actionError}</p>}
                 {gameConfig.mode === 'multiplayer' && (
                   <div className="mode-badge glass">
                     Round {round}/{gameConfig.rounds || 3} · Score {score.X}-{score.O}
@@ -1484,8 +1699,11 @@ export default function App() {
                 {gameStatus === 'round_complete' && (
                   <button className="btn-primary" onClick={readyNextRound}>Ready for next round</button>
                 )}
-                {gameStatus === 'complete' && (
+                {gameStatus === 'complete' && !['disconnect_forfeit', 'voluntary_forfeit'].includes(completionReason) && (
                   <button className="btn-primary" onClick={requestRematch}>Request rematch</button>
+                )}
+                {gameStatus === 'complete' && ['disconnect_forfeit', 'voluntary_forfeit'].includes(completionReason) && (
+                  <button className="btn-primary" onClick={handleAcknowledgeTerminalRoom}>Return home</button>
                 )}
                 {gameStatus === 'cancelled' && (
                   <button className="btn-primary" onClick={handleAcknowledgeTerminalRoom}>Return home</button>

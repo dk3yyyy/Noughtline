@@ -21,6 +21,8 @@ function loadConfig(overrides = {}) {
       .filter(Boolean),
     paystackSecretKey: overrides.paystackSecretKey ?? process.env.PAYSTACK_SECRET_KEY ?? '',
     publicAppUrl: overrides.publicAppUrl || process.env.PUBLIC_APP_URL || 'http://localhost:5173',
+    roomActionRateLimit: Number(overrides.roomActionRateLimit || process.env.ROOM_ACTION_RATE_LIMIT || 30),
+    roomActionRateWindowMs: Number(overrides.roomActionRateWindowMs || process.env.ROOM_ACTION_RATE_WINDOW_MS || 60_000),
   };
 }
 

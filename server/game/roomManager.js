@@ -3,6 +3,17 @@ const crypto = require('crypto');
 const ALLOWED_SIZES = new Set([3, 4, 5]);
 const ALLOWED_ROUNDS = new Set([1, 3, 5]);
 const DISCONNECT_GRACE_MS = 30_000;
+const NONTERMINAL_STATUSES = new Set(['waiting', 'active', 'paused', 'round_complete']);
+
+const ERROR_MESSAGES = Object.freeze({
+  ROOM_NOT_FOUND: 'Room not found',
+  ACTIVE_ROOM_EXISTS: 'You already have an active room',
+  NOT_ROOM_MEMBER: 'Player is not in this room',
+});
+
+function failure(code, details = {}) {
+  return { error: ERROR_MESSAGES[code] || 'The game action could not be completed', code, ...details };
+}
 
 class RoomManager {
   constructor({ onSeriesComplete = () => {}, now = () => Date.now() } = {}) {
@@ -58,6 +69,19 @@ class RoomManager {
 
   getRoom(roomId) {
     return this.rooms.get(String(roomId || '').trim().toUpperCase());
+  }
+
+  deleteRoom(roomId) {
+    return this.rooms.delete(String(roomId || '').trim().toUpperCase());
+  }
+
+  findActiveRoomForUser(userId, { excludingRoomId } = {}) {
+    const excluded = String(excludingRoomId || '').trim().toUpperCase();
+    for (const room of this.rooms.values()) {
+      if (room.id === excluded || !NONTERMINAL_STATUSES.has(room.state.status)) continue;
+      if (room.players.some((player) => player.id === userId)) return room;
+    }
+    return null;
   }
 
   publicRoom(room) {
@@ -126,6 +150,8 @@ class RoomManager {
       this.syncConnectionState(room);
       return { room: this.publicRoom(room), player: { ...reconnecting } };
     }
+    const activeRoom = this.findActiveRoomForUser(player.userId, { excludingRoomId: room.id });
+    if (activeRoom) return failure('ACTIVE_ROOM_EXISTS', { roomId: activeRoom.id });
     if (room.players.length >= 2) return { error: 'Room full' };
 
     const joined = {
@@ -235,6 +261,55 @@ class RoomManager {
     return { room: this.publicRoom(room), waiting: false };
   }
 
+  settleForfeit(room, winner, reason) {
+    room.state.status = 'complete';
+    room.state.winner = winner.symbol;
+    room.state.seriesWinner = winner.symbol;
+    room.state.completionReason = reason;
+    room.state.disconnectDeadline = null;
+    room.resumeStatus = null;
+    room.state.score[winner.symbol] += 1;
+    room.nextRoundReady.clear();
+    room.rematchReady.clear();
+    room.roundHistory.push({
+      round: room.state.round,
+      winner: winner.symbol,
+      board: [...room.state.board],
+      reason,
+    });
+    if (!room.settled) {
+      this.onSeriesComplete(this.publicRoom(room), room.roundHistory.map((entry) => ({ ...entry, board: [...entry.board] })));
+      room.settled = true;
+    }
+    room.updatedAt = this.now();
+    return this.publicRoom(room);
+  }
+
+  leaveRoom(roomId, userId, socketId) {
+    const room = this.getRoom(roomId);
+    if (!room) return failure('ROOM_NOT_FOUND');
+    const player = room.players.find((entry) => entry.id === userId && entry.connected && entry.socketId === socketId);
+    if (!player) return failure('NOT_ROOM_MEMBER');
+
+    if (room.state.status === 'complete' || room.state.status === 'cancelled') {
+      player.connected = false;
+      player.disconnectedAt = this.now();
+      room.updatedAt = this.now();
+      return { room: this.publicRoom(room), acknowledged: true };
+    }
+
+    if (room.state.status === 'waiting' && room.players.length === 1) {
+      this.rooms.delete(room.id);
+      return { roomId: room.id, deleted: true };
+    }
+
+    const opponent = room.players.find((entry) => entry.id !== userId);
+    if (!opponent) return failure('NOT_ROOM_MEMBER');
+    player.connected = false;
+    player.disconnectedAt = this.now();
+    return { room: this.settleForfeit(room, opponent, 'voluntary_forfeit') };
+  }
+
   disconnectAll(socketId) {
     const results = [];
     for (const room of this.rooms.values()) {
@@ -272,23 +347,7 @@ class RoomManager {
       }
 
       const winner = connected[0];
-      room.state.status = 'complete';
-      room.state.winner = winner.symbol;
-      room.state.seriesWinner = winner.symbol;
-      room.state.completionReason = 'disconnect_forfeit';
-      room.state.disconnectDeadline = null;
-      room.resumeStatus = null;
-      room.state.score[winner.symbol] += 1;
-      room.roundHistory.push({
-        round: room.state.round,
-        winner: winner.symbol,
-        board: [...room.state.board],
-        reason: 'disconnect_forfeit',
-      });
-      this.onSeriesComplete(this.publicRoom(room), room.roundHistory.map((entry) => ({ ...entry, board: [...entry.board] })));
-      room.settled = true;
-      room.updatedAt = this.now();
-      resolved.push({ roomId: room.id, room: this.publicRoom(room) });
+      resolved.push({ roomId: room.id, room: this.settleForfeit(room, winner, 'disconnect_forfeit') });
     }
     return resolved;
   }

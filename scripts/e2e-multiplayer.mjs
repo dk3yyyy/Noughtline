@@ -231,8 +231,70 @@ try {
   const hostTokenAfterRefresh = await evaluate(cdp, host, `localStorage.getItem('noughtline_access_token')`);
   if (hostTokenAfterRefresh !== hostToken) throw new Error('Host identity changed after refresh');
 
-  const hostScreenshot = await screenshot(cdp, host, '_e2e-host.png');
-  const guestScreenshot = await screenshot(cdp, guest, '_e2e-guest-mobile.png');
+  const thirdContext = (await cdp.send('Target.createBrowserContext')).browserContextId;
+  const third = await attachPage(cdp, thirdContext, baseUrl, { width: 1024, height: 800, mobile: false });
+  await waitFor(cdp, third, `document.querySelectorAll('button').length > 3`, 'third player home');
+  await clickButton(cdp, third, 'Challenge a player');
+  await waitFor(cdp, third, `Array.from(document.querySelectorAll('button')).some((button) => button.innerText === 'Host Game')`, 'third player multiplayer menu');
+  await clickButton(cdp, third, 'Host Game');
+  await waitFor(cdp, third, `Array.from(document.querySelectorAll('button')).some((button) => button.innerText === 'Create Game')`, 'third player host configuration');
+  await clickButton(cdp, third, 'Create Game');
+  const conflictRoomId = await waitFor(cdp, third, `document.querySelector('.invite-code-panel strong')?.textContent`, 'conflict room creation');
+  const conflictInviteUrl = await evaluate(cdp, third, `document.querySelector('.invite-url').textContent`);
+  await clickButton(cdp, third, 'Enter waiting room');
+  await waitFor(cdp, third, `document.body.innerText.includes('Waiting for opponent')`, 'third player waiting room');
+
+  await cdp.send('Page.navigate', { url: conflictInviteUrl }, host.sessionId);
+  await waitFor(cdp, host, `document.querySelector('#room-code')?.value === ${JSON.stringify(conflictRoomId)}`, 'host cross-room invite');
+  await waitFor(cdp, host, `Array.from(document.querySelectorAll('button')).some((button) => button.innerText === 'Join room' && !button.disabled)`, 'host cross-room socket readiness');
+  await evaluate(cdp, host, `document.querySelector('form').requestSubmit(); true`);
+  const conflictTitle = await waitFor(cdp, host, `document.querySelector('#active-room-title')?.textContent`, 'active-room conflict dialog');
+  if (!conflictTitle.includes('already have a match')) throw new Error(`Unexpected active-room conflict copy: ${conflictTitle}`);
+  const conflictExistingRoom = await evaluate(cdp, host, `document.querySelector('.invite-code-panel strong')?.textContent`);
+  if (conflictExistingRoom !== roomId) throw new Error(`Conflict pointed to ${conflictExistingRoom}, expected ${roomId}`);
+  await clickButton(cdp, host, 'Resume match');
+  await waitFor(cdp, host, `document.querySelector('.game-screen') && document.querySelectorAll('.square')[3].textContent.trim() === 'O'`, 'resume from active-room conflict');
+
+  await evaluate(cdp, third, `document.querySelector('.back-btn').click(); true`);
+  const waitingLeaveTitle = await waitFor(cdp, third, `document.querySelector('#leave-room-title')?.textContent`, 'waiting-room leave confirmation');
+  if (waitingLeaveTitle !== 'Leave waiting room?') throw new Error(`Unexpected waiting leave copy: ${waitingLeaveTitle}`);
+  await clickButton(cdp, third, 'Leave room');
+  await waitFor(cdp, third, `Boolean(document.querySelector('.home-screen'))`, 'waiting host returned home');
+
+  await evaluate(cdp, host, `document.querySelector('.back-btn').click(); true`);
+  const forfeitTitle = await waitFor(cdp, host, `document.querySelector('#leave-room-title')?.textContent`, 'forfeit confirmation');
+  if (forfeitTitle !== 'Forfeit this match?') throw new Error(`Unexpected forfeit copy: ${forfeitTitle}`);
+  const hostScreenshot = await screenshot(cdp, host, '_e2e-host-forfeit.png');
+  await clickButton(cdp, host, 'Forfeit match');
+  await waitFor(cdp, host, `Boolean(document.querySelector('.home-screen'))`, 'forfeiter returned home');
+  const opponentResult = await waitFor(cdp, guest, `document.querySelector('.winner-text')?.textContent`, 'opponent voluntary-forfeit result');
+  if (!opponentResult.includes('Opponent forfeited')) throw new Error(`Unexpected opponent result: ${opponentResult}`);
+  await waitFor(cdp, guest, `!document.querySelector('.recovery-toast')`, 'terminal state clears recovery toast');
+  const terminalAction = await evaluate(cdp, guest, `Array.from(document.querySelectorAll('button')).find((button) => button.innerText === 'Return home')?.innerText`);
+  if (terminalAction !== 'Return home') throw new Error(`Unexpected terminal action: ${terminalAction}`);
+  const guestScreenshot = await screenshot(cdp, guest, '_e2e-guest-forfeit-mobile.png');
+
+  await clickButton(cdp, host, 'Challenge a player');
+  await waitFor(cdp, host, `Array.from(document.querySelectorAll('button')).some((button) => button.innerText === 'Host Game')`, 'post-forfeit multiplayer menu');
+  await clickButton(cdp, host, 'Host Game');
+  await waitFor(cdp, host, `Array.from(document.querySelectorAll('button')).some((button) => button.innerText === 'Create Game')`, 'post-forfeit host configuration');
+  await clickButton(cdp, host, 'Create Game');
+  const replacementRoomId = await waitFor(cdp, host, `document.querySelector('.invite-code-panel strong')?.textContent`, 'post-forfeit room creation');
+  const replacementInviteUrl = await evaluate(cdp, host, `document.querySelector('.invite-url').textContent`);
+  await clickButton(cdp, host, 'Enter waiting room');
+  await waitFor(cdp, host, `document.body.innerText.includes('Waiting for opponent')`, 'replacement waiting room');
+  await evaluate(cdp, host, `document.querySelector('.back-btn').click(); true`);
+  await waitFor(cdp, host, `document.querySelector('#leave-room-title')?.textContent === 'Leave waiting room?'`, 'replacement room leave confirmation');
+  await clickButton(cdp, host, 'Leave room');
+  await waitFor(cdp, host, `Boolean(document.querySelector('.home-screen'))`, 'replacement room deletion');
+
+  await cdp.send('Page.navigate', { url: replacementInviteUrl }, guest.sessionId);
+  await waitFor(cdp, guest, `document.querySelector('#room-code')?.value === ${JSON.stringify(replacementRoomId)}`, 'deleted-room invite prefill');
+  await waitFor(cdp, guest, `Array.from(document.querySelectorAll('button')).some((button) => button.innerText === 'Join room' && !button.disabled)`, 'deleted-room join readiness');
+  await evaluate(cdp, guest, `document.querySelector('form').requestSubmit(); true`);
+  const deletedRoomError = await waitFor(cdp, guest, `document.querySelector('.form-error')?.textContent`, 'deleted-room rejection');
+  if (!deletedRoomError.includes('no longer exists')) throw new Error(`Unexpected deleted-room error: ${deletedRoomError}`);
+
   console.log(JSON.stringify({
     status: 'passed',
     baseUrl,
@@ -241,6 +303,13 @@ try {
     inlineError,
     disconnectText,
     board: ['X', null, null, 'O', null, null, null, null, null],
+    conflictRoomId,
+    conflictExistingRoom,
+    waitingLeaveTitle,
+    forfeitTitle,
+    opponentResult,
+    replacementRoomId,
+    deletedRoomError,
     hostScreenshot,
     guestScreenshot,
   }, null, 2));
