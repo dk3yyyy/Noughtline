@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { API_BASE_URL, SOCKET_URL } from './config';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { api, clearSession, ensureSession, getSocket } from './services/client';
 import {
   Home,
   Trophy,
@@ -17,8 +17,7 @@ import {
   Moon,
   Sun,
   Shield,
-  RotateCcw,
-  Package
+  RotateCcw
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import confetti from 'canvas-confetti';
@@ -26,7 +25,7 @@ import './App.css';
 import './MultiplayerModals.css';
 
 // --- Sound Hook ---
-const useSound = (enabled) => {
+const useSound = (enabled) => useMemo(() => {
   const playClick = () => {
     if (!enabled) return;
     const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2571/2571-preview.mp3');
@@ -49,7 +48,7 @@ const useSound = (enabled) => {
   };
 
   return { playClick, playWin, playLose };
-};
+}, [enabled]);
 
 // --- Components ---
 
@@ -107,7 +106,7 @@ const SettingsModal = ({ show, onClose, config, setConfig, onExport, onDelete })
   );
 };
 
-const TopBar = ({ stats, setShowSettings, user, onBuyTokens, onBuyGems }) => (
+const TopBar = ({ stats, setShowSettings, user, onBuyGems }) => (
   <div className="top-bar">
     <div className="stat-item">
       <Flame size={18} color="#f97316" fill="#f97316" />
@@ -118,11 +117,6 @@ const TopBar = ({ stats, setShowSettings, user, onBuyTokens, onBuyGems }) => (
       <span>{stats.xp}</span>
     </div>
     <div className="stat-group">
-      <div className="stat-item glass clickable" onClick={onBuyTokens}>
-        <Package size={16} color="#fb7185" fill="#fb7185" />
-        <span>{user.tokens || 0}</span>
-        <div className="plus-btn">+</div>
-      </div>
       <div className="stat-item glass clickable" onClick={onBuyGems}>
         <Gem size={16} color="#2dd4bf" fill="#2dd4bf" />
         <span>{user.gems || 0}</span>
@@ -171,52 +165,8 @@ const BottomNav = ({ activeTab, setActiveTab }) => {
 
 // --- New Modals per Screenshots ---
 
-const BuyTokensModal = ({ show, onClose, onBuy }) => {
-  const [amount, setAmount] = useState(1);
+const BuyGemsModal = ({ show, onClose, packages, onBuy }) => {
   if (!show) return null;
-
-  return (
-    <div className="modal-backdrop">
-      <motion.div
-        className="modal-content light-theme"
-        initial={{ scale: 0.9, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-      >
-        <h2 className="modal-title-dark">Buy Tokens</h2>
-
-        <div className="input-group">
-          <label>Number of Tokens</label>
-          <input
-            type="number"
-            min="1"
-            value={amount}
-            onChange={e => setAmount(Math.max(1, parseInt(e.target.value) || 1))}
-            className="token-input"
-          />
-        </div>
-
-        <div className="total-display">
-          Total: <span>₦{(amount * 1000).toLocaleString()}</span>
-        </div>
-
-        <button className="btn-paystack" onClick={() => onBuy(amount * 1000)}>
-          Pay ₦{(amount * 1000).toLocaleString()} with Paystack
-        </button>
-
-        <button className="btn-cancel" onClick={onClose}>Cancel</button>
-      </motion.div>
-    </div>
-  );
-};
-
-const BuyGemsModal = ({ show, onClose, user, onExchange }) => {
-  if (!show) return null;
-  const packages = [
-    { gems: 120, cost: 1 },
-    { gems: 250, cost: 2 },
-    { gems: 800, cost: 5 },
-    { gems: 1500, cost: 10 },
-  ];
 
   return (
     <div className="modal-backdrop">
@@ -227,7 +177,7 @@ const BuyGemsModal = ({ show, onClose, user, onExchange }) => {
         animate={{ scale: 1, opacity: 1 }}
       >
         <h2 className="modal-title-dark">Buy Gems</h2>
-        <p className="wallet-status">You have <Package size={14} color="#fb7185" /> <b>{user.tokens} tokens</b> and <Gem size={14} color="#2dd4bf" /> <b>{user.gems} gems</b></p>
+        <p className="wallet-status">Gem amounts and prices are verified by the server before payment.</p>
 
         <div className="gem-grid">
           {packages.map((pkg, i) => (
@@ -236,13 +186,10 @@ const BuyGemsModal = ({ show, onClose, user, onExchange }) => {
                 <Gem size={16} color="#2dd4bf" fill="#2dd4bf" /> {pkg.gems}
               </div>
               <div className="gem-label">Gems</div>
-              <div className="token-cost">
-                <Package size={14} color="#fb7185" /> {pkg.cost} {pkg.cost === 1 ? 'token' : 'tokens'}
-              </div>
+              <div className="token-cost">₦{pkg.amountNgn.toLocaleString()}</div>
               <button
                 className="btn-buy-sm"
-                disabled={user.tokens < pkg.cost}
-                onClick={() => onExchange(pkg.cost, pkg.gems)}
+                onClick={() => onBuy(pkg.id)}
               >
                 Buy
               </button>
@@ -258,7 +205,9 @@ const BuyGemsModal = ({ show, onClose, user, onExchange }) => {
 
 const ShopItemModal = ({ show, onClose, item, user, onBuy }) => {
   if (!show || !item) return null;
-  const canAfford = user.gems >= item.cost_gems;
+  const currency = item.currency === 'coins' ? 'coins' : 'gems';
+  const cost = currency === 'coins' ? item.cost_coins : item.cost_gems;
+  const canAfford = (user[currency] || 0) >= cost;
 
   return (
     <div className="modal-backdrop glass-backdrop">
@@ -273,7 +222,7 @@ const ShopItemModal = ({ show, onClose, item, user, onBuy }) => {
 
         <h2 className="item-title">{item.name}</h2>
         <div className="item-price">
-          {item.cost_gems} <Gem size={18} color="#2dd4bf" fill="#2dd4bf" />
+          {cost} {currency === 'coins' ? <Coins size={18} color="#fbbf24" fill="#fbbf24" /> : <Gem size={18} color="#2dd4bf" fill="#2dd4bf" />}
         </div>
 
         <p className="item-desc">{item.description || "Unlock this exclusive item for your collection."}</p>
@@ -335,7 +284,7 @@ const HostGameModal = ({ show, onClose, onStart }) => {
         <div className="config-section">
           <label className="config-label">Number of Rounds</label>
           <div className="pill-group">
-            {[3, 5, 10].map(r => (
+            {[1, 3, 5].map(r => (
               <button
                 key={r}
                 className={`pill-btn ${rounds === r ? 'active' : ''}`}
@@ -463,10 +412,7 @@ const SearchingMatchModal = ({ show, onCancel }) => {
 
 // --- Game Logic Hooks ---
 
-import io from 'socket.io-client';
-import axios from 'axios';
-
-const socket = io(SOCKET_URL); // Connect to backend using centralized config
+const socket = getSocket();
 
 const useTicTacToe = (gameConfig, setGameConfig, sounds, user) => {
   const { size: boardSize, mode, roomId, difficulty } = gameConfig;
@@ -476,6 +422,9 @@ const useTicTacToe = (gameConfig, setGameConfig, sounds, user) => {
   const [winningLine, setWinningLine] = useState([]);
   const [isActionPending, setIsActionPending] = useState(false); // For network ops
   const [mySymbol, setMySymbol] = useState('X');
+  const [gameStatus, setGameStatus] = useState('waiting');
+  const [round, setRound] = useState(1);
+  const [score, setScore] = useState({ X: 0, O: 0 });
 
   useEffect(() => {
     // Reset Logic
@@ -484,6 +433,9 @@ const useTicTacToe = (gameConfig, setGameConfig, sounds, user) => {
     setWinner(null);
     setWinningLine([]);
     setIsActionPending(false);
+    setGameStatus(mode === 'singleplayer' ? 'active' : 'waiting');
+    setRound(1);
+    setScore({ X: 0, O: 0 });
     if (mode === 'singleplayer') setMySymbol('X');
 
     if (mode === 'multiplayer' && roomId) {
@@ -494,10 +446,13 @@ const useTicTacToe = (gameConfig, setGameConfig, sounds, user) => {
         setIsXNext(room.state.isXNext);
         setWinner(room.state.winner);
         setWinningLine(room.state.winningLine);
+        setGameStatus(room.state.status);
+        setRound(room.state.round);
+        setScore(room.state.score);
         setIsActionPending(false);
 
         // Find my symbol
-        const me = room.players.find(p => p.socketId === socket.id);
+        const me = room.players.find(p => p.id === user.id);
         if (me) setMySymbol(me.symbol);
 
         // Sync board size if it differs (e.g. joined a room with different size)
@@ -506,17 +461,18 @@ const useTicTacToe = (gameConfig, setGameConfig, sounds, user) => {
         }
       });
 
-      socket.on('error', (err) => {
+      socket.on('game_error', (err) => {
+        setIsActionPending(false);
         alert(err);
       });
 
       return () => {
         socket.off('room_update');
-        socket.off('error');
+        socket.off('game_error');
         // socket.emit('leave_room'); // Optional if component unmounts
       };
     }
-  }, [boardSize, mode, roomId]);
+  }, [boardSize, mode, roomId, setGameConfig, user.id, user.username]);
 
   const calculateWinner = (squares) => {
     const lines = [];
@@ -679,13 +635,17 @@ const useTicTacToe = (gameConfig, setGameConfig, sounds, user) => {
   };
 
   const resetGame = () => {
+    if (mode === 'multiplayer') return;
     setBoard(Array(boardSize * boardSize).fill(null));
     setIsXNext(true);
     setWinner(null);
     setWinningLine([]);
   };
 
-  return { board, handleClick, winner, winningLine, isXNext, resetGame, mySymbol };
+  const readyNextRound = () => socket.emit('ready_next_round', { roomId });
+  const requestRematch = () => socket.emit('request_rematch', { roomId });
+
+  return { board, handleClick, winner, winningLine, isXNext, resetGame, mySymbol, gameStatus, round, score, readyNextRound, requestRematch };
 };
 
 // --- Main App ---
@@ -708,39 +668,41 @@ export default function App() {
   });
 
   const [gameConfig, setGameConfig] = useState({ size: 3, difficulty: 'easy', mode: 'singleplayer', roomId: null });
-  const [user, setUser] = useState({ username: 'Guest', tokens: 0, gems: 0 });
+  const [user, setUser] = useState({ username: 'Guest', gems: 0, coins: 0, xp: 0, streak: 0 });
   const [leaderboard, setLeaderboard] = useState([]);
   const [shopItems, setShopItems] = useState([]);
   const [inventory, setInventory] = useState([]);
-
+  const [gemPackages, setGemPackages] = useState([]);
+  const [stats, setStats] = useState({ streak: 0, xp: 0, coins: 0 });
 
   // Modal States
-  const [showBuyTokens, setShowBuyTokens] = useState(false);
   const [showBuyGems, setShowBuyGems] = useState(false);
   const [selectedShopItem, setSelectedShopItem] = useState(null);
 
-  // Guest Lifecycle: UUID generation
-  useEffect(() => {
-    let uuid = localStorage.getItem('plaything_uuid');
-    if (!uuid) {
-      uuid = 'u_' + Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
-      localStorage.setItem('plaything_uuid', uuid);
-    }
-    fetchUserData(uuid);
+  const fetchUserData = useCallback(async () => {
+    try {
+      const res = await api.get('/api/me');
+      setUser(res.data);
+      setStats({ streak: res.data.streak || 0, xp: res.data.xp || 0, coins: res.data.coins || 0 });
+      const invRes = await api.get('/api/me/inventory');
+      setInventory(invRes.data);
+    } catch (error) { console.error("Sync error", error); }
   }, []);
 
-  const fetchUserData = async (uuid) => {
-    try {
-      const res = await axios.get(`${API_BASE_URL}/api/user/${uuid}`);
-      setUser(res.data);
-      const invRes = await axios.get(`${API_BASE_URL}/api/user/${uuid}/inventory`);
-      setInventory(invRes.data);
-    } catch (e) { console.error("Sync error", e); }
-  };
+  // Server-issued guest session. The browser never chooses the account ID.
+  useEffect(() => {
+    ensureSession()
+      .then(({ user: sessionUser }) => {
+        setUser(sessionUser);
+        return fetchUserData();
+      })
+      .catch((error) => console.error('Session bootstrap failed', error));
+  }, [fetchUserData]);
 
   // Fetch shop items on mount
   useEffect(() => {
-    axios.get(API_BASE_URL + '/api/shop/items').then(res => setShopItems(res.data));
+    api.get('/api/shop/items').then(res => setShopItems(res.data));
+    api.get('/api/economy/gem-packages').then(res => setGemPackages(res.data));
   }, []);
 
   // Connection State
@@ -761,7 +723,7 @@ export default function App() {
 
   // Matchmaking Listeners
   useEffect(() => {
-    socket.on('match_found', ({ roomId, opponent, opponentAvatar, symbol }) => {
+    socket.on('match_found', ({ roomId, opponent, opponentAvatar }) => {
       setIsSearching(false);
       setShowMultiplayerMenu(false);
       setGameConfig(prev => ({ ...prev, mode: 'multiplayer', roomId, size: 3, opponentAvatar, opponentName: opponent }));
@@ -786,28 +748,20 @@ export default function App() {
   // Fetch leaderboard when switching tabs
   useEffect(() => {
     if (activeTab === 'leaderboard') {
-      axios.get(API_BASE_URL + '/api/leaderboard')
+      api.get('/api/leaderboard')
         .then(res => setLeaderboard(res.data))
         .catch(e => console.error(e));
     }
   }, [activeTab]);
 
-  const [stats, setStats] = useState(() => {
-    const saved = localStorage.getItem('plaything_stats');
-    return saved ? JSON.parse(saved) : { streak: 0, xp: 0, gems: 100, coins: 0.00 };
-  });
-
   const sounds = useSound(userConfig.sound);
-  const { board, handleClick, winner, winningLine, isXNext, resetGame, mySymbol } = useTicTacToe(gameConfig, setGameConfig, sounds, user);
+  const { board, handleClick, winner, winningLine, isXNext, resetGame, mySymbol, gameStatus, round, score, readyNextRound, requestRematch } = useTicTacToe(gameConfig, setGameConfig, sounds, user);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', userConfig.theme);
     localStorage.setItem('plaything_config', JSON.stringify(userConfig));
   }, [userConfig]);
 
-  useEffect(() => {
-    localStorage.setItem('plaything_stats', JSON.stringify(stats));
-  }, [stats]);
 
   useEffect(() => {
     if (activeTab === 'shop') setView('SHOP');
@@ -833,22 +787,26 @@ export default function App() {
         origin: { y: 0.6 },
         colors: ['#2dd4bf', '#8b5cf6', '#fb7185']
       });
-      setStats(prev => ({ ...prev, streak: prev.streak + 1, xp: prev.xp + 50, coins: prev.coins + 0.5 }));
     } else if (isLoss) {
       sounds.playLose();
-      setStats(prev => ({ ...prev, streak: 0 }));
     }
-  }, [winner, mySymbol]);
+  }, [winner, mySymbol, sounds]);
+
+  useEffect(() => {
+    if (gameConfig.mode === 'multiplayer' && gameStatus === 'complete') fetchUserData();
+  }, [gameStatus, gameConfig.mode, fetchUserData]);
 
   // Modal Handlers
   const handleHostGame = (rounds, size) => {
-    const roomId = Math.random().toString(36).substring(2, 7).toUpperCase();
-    // Pass config to server here (logic updated in RoomManager)
-    socket.emit('create_room', { roomId, config: { size, rounds } });
-
-    setGameConfig({ ...gameConfig, mode: 'multiplayer', roomId, size });
-    setShowHostModal(false);
-    setShowGameCreatedModal(true); // Show Code Modal
+    socket.emit('create_room', { config: { size, rounds } }, (result) => {
+      if (result?.error) {
+        alert(result.error);
+        return;
+      }
+      setGameConfig({ ...gameConfig, mode: 'multiplayer', roomId: result.room.id, size, rounds });
+      setShowHostModal(false);
+      setShowGameCreatedModal(true);
+    });
   };
 
   const handleStartGame = () => {
@@ -859,19 +817,22 @@ export default function App() {
   };
 
   const handleJoinRoom = () => {
-    const roomId = prompt("Enter Room ID:");
-    if (roomId) {
-      setGameConfig({ ...gameConfig, mode: 'multiplayer', roomId, size: 3 });
-
+    const roomId = prompt("Enter Room ID:")?.trim().toUpperCase();
+    if (!roomId) return;
+    socket.emit('join_room', { roomId }, (result) => {
+      if (result?.error) {
+        alert(result.error);
+        return;
+      }
+      setGameConfig({ ...gameConfig, mode: 'multiplayer', roomId: result.room.id, size: result.room.config.size, rounds: result.room.config.rounds });
       setShowMultiplayerMenu(false);
       setView('GAME');
-    }
+    });
   };
 
   const handlePlayStranger = () => {
     setIsSearching(true);
-    const uuid = localStorage.getItem('plaything_uuid');
-    socket.emit('find_match', { uuid, username: user.username, avatar: user.avatar });
+    socket.emit('find_match');
   };
 
   const handleCancelSearch = () => {
@@ -880,55 +841,30 @@ export default function App() {
   };
 
   const handleGoogleLogin = async () => {
-    const email = prompt("Enter email (Google Mock):");
-    if (!email) return;
-
-    const uuid = localStorage.getItem('plaything_uuid');
-    try {
-      await axios.post(API_BASE_URL + '/api/auth/convert', {
-        uuid,
-        google_id: 'g_' + Math.random().toString(36).substring(7),
-        email,
-        username: email.split('@')[0]
-      });
-      alert("Account Linked Successfully!");
-      fetchUserData(uuid);
-    } catch (e) { alert(e.response.data.error); }
+    alert('Google account linking is disabled until real OAuth credentials and server-side token verification are configured.');
   };
 
-  const exchangeTokens = async (tokens) => {
-    const uuid = localStorage.getItem('plaything_uuid');
+  const buyGemPackage = async (packageId) => {
     try {
-      await axios.post(API_BASE_URL + '/api/economy/exchange', { uuid, tokens });
-      fetchUserData(uuid);
-      sounds.playWin(); // Use win sound for success
-    } catch (e) { alert("Insufficient Tokens"); }
+      const { data } = await api.post('/api/economy/payments', { packageId });
+      window.location.assign(data.authorizationUrl);
+    } catch (error) {
+      alert(error.response?.data?.error || 'Payment could not be started');
+    }
   };
 
   const buyAvatar = async (avatarId) => {
-    const uuid = localStorage.getItem('plaything_uuid');
     try {
-      await axios.post(API_BASE_URL + '/api/economy/buy-avatar', { uuid, avatarId });
-      fetchUserData(uuid);
+      await api.post('/api/shop/purchase', { avatarId });
+      await fetchUserData();
+      setSelectedShopItem(null);
       alert("Avatar Added to Collection!");
-    } catch (e) { alert("Insufficient Gems or Already Owned"); }
-  };
-
-  const buyTokenPacks = async (amount) => {
-    const uuid = localStorage.getItem('plaything_uuid');
-    // Mock Paystack Success
-    await axios.post(API_BASE_URL + '/api/economy/deposit', {
-      uuid,
-      amount_ngn: amount,
-      reference: 'T_' + Date.now()
-    });
-    fetchUserData(uuid);
+    } catch (error) { alert(error.response?.data?.error || "Purchase failed"); }
   };
 
   const handleExportData = async () => {
-    const uuid = localStorage.getItem('plaything_uuid');
     try {
-      const res = await axios.get(`${API_BASE_URL}/api/user/${uuid}/export`);
+      const res = await api.get('/api/me/export');
       const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(res.data, null, 2));
       const downloadAnchorNode = document.createElement('a');
       downloadAnchorNode.setAttribute("href", dataStr);
@@ -936,28 +872,26 @@ export default function App() {
       document.body.appendChild(downloadAnchorNode);
       downloadAnchorNode.click();
       downloadAnchorNode.remove();
-    } catch (e) { alert("Export failed"); }
+    } catch { alert("Export failed"); }
   };
 
   const handleDeleteAccount = async () => {
     if (!confirm("Are you sure? This is permanent and cannot be undone.")) return;
 
-    const uuid = localStorage.getItem('plaything_uuid');
     try {
-      await axios.delete(`${API_BASE_URL}/api/user/${uuid}`);
+      await api.delete('/api/me');
       alert("Account Deleted. Goodbye!");
-      localStorage.removeItem('plaything_uuid');
+      clearSession();
       window.location.reload();
-    } catch (e) { alert("Delete failed"); }
+    } catch { alert("Delete failed"); }
   };
 
   const equipAvatar = async (avatarId) => {
-    const uuid = localStorage.getItem('plaything_uuid');
     try {
-      await axios.post(API_BASE_URL + '/api/user/equip', { uuid, avatarId });
-      fetchUserData(uuid);
+      await api.post('/api/me/equip-avatar', { avatarId });
+      await fetchUserData();
       sounds.playClick();
-    } catch (e) { alert("Failed to equip"); }
+    } catch { alert("Failed to equip"); }
   };
 
 
@@ -968,7 +902,7 @@ export default function App() {
           OFFLINE - Attempting to Reconnect...
         </div>
       )}
-      <TopBar stats={stats} setShowSettings={setShowSettings} user={user} onBuyTokens={() => setShowBuyTokens(true)} onBuyGems={() => setShowBuyGems(true)} />
+      <TopBar stats={stats} setShowSettings={setShowSettings} user={user} onBuyGems={() => setShowBuyGems(true)} />
 
       <SettingsModal
         show={showSettings}
@@ -1005,17 +939,11 @@ export default function App() {
         onCancel={handleCancelSearch}
       />
 
-      <BuyTokensModal
-        show={showBuyTokens}
-        onClose={() => setShowBuyTokens(false)}
-        onBuy={buyTokenPacks}
-      />
-
       <BuyGemsModal
         show={showBuyGems}
         onClose={() => setShowBuyGems(false)}
-        user={user}
-        onExchange={exchangeTokens}
+        packages={gemPackages}
+        onBuy={buyGemPackage}
       />
 
       <ShopItemModal
@@ -1222,9 +1150,11 @@ export default function App() {
                   </button>
                   <div className="mode-badge glass">MODE: {gameConfig.mode === 'multiplayer' ? `ROOM: ${gameConfig.roomId}` : gameConfig.difficulty.toUpperCase()}</div>
                   <div className="spacer" />
-                  <button className="reset-icon-btn" onClick={resetGame}>
-                    <RotateCcw size={20} />
-                  </button>
+                  {gameConfig.mode === 'singleplayer' && (
+                    <button className="reset-icon-btn" onClick={resetGame}>
+                      <RotateCcw size={20} />
+                    </button>
+                  )}
                 </div>
 
                 <div className="players">
@@ -1254,6 +1184,17 @@ export default function App() {
                     <span className="animate-pulse">{isXNext === (mySymbol === 'X') ? "> Your Turn" : "> Opponent Turn"}</span>
                   )}
                 </div>
+                {gameConfig.mode === 'multiplayer' && (
+                  <div className="mode-badge glass">
+                    Round {round}/{gameConfig.rounds || 3} · Score {score.X}-{score.O}
+                  </div>
+                )}
+                {gameStatus === 'round_complete' && (
+                  <button className="btn-primary" onClick={readyNextRound}>Ready for next round</button>
+                )}
+                {gameStatus === 'complete' && (
+                  <button className="btn-primary" onClick={requestRematch}>Request rematch</button>
+                )}
               </div>
 
               <div
@@ -1298,7 +1239,6 @@ export default function App() {
                   <p style={{ opacity: 0.7, margin: 0, fontSize: '1.1rem' }}>Secure Currency Exchange</p>
                 </div>
                 <div style={{ display: 'flex', gap: '1rem' }}>
-                  <button className="pill-btn active" onClick={() => setShowBuyTokens(true)}>+ Buy Tokens</button>
                   <button className="pill-btn active" style={{ background: 'var(--accent-teal)', color: 'black' }} onClick={() => setShowBuyGems(true)}>+ Buy Gems</button>
                 </div>
               </div>
@@ -1312,7 +1252,7 @@ export default function App() {
                       <img src={item.url} className="shop-item-img" />
                       <div className="rarity-tag" data-rarity={item.rarity}>{item.rarity}</div>
                       <h4>{item.name}</h4>
-                      <p><Gem size={14} color="#2dd4bf" /> {item.cost_gems}</p>
+                      <p>{item.currency === 'coins' ? <Coins size={14} color="#fbbf24" /> : <Gem size={14} color="#2dd4bf" />} {item.currency === 'coins' ? item.cost_coins : item.cost_gems}</p>
                       <button
                         className={isOwned ? 'btn-gray' : 'btn-teal'}
                         disabled={isOwned}

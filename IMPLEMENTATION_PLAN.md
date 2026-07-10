@@ -1,59 +1,32 @@
-# Tic-Tac Pro Implementation Plan
+# Tic-Tac Implementation Roadmap
 
-This document outlines the roadmap to upgrade the current "Tic-Tac" frontend-only application into a full-stack, feature-rich web application as per the user's specification.
+The original frontend-only upgrade plan has been superseded by the secure-foundation work documented in [`docs/SECURE_FOUNDATION_PLAN.md`](docs/SECURE_FOUNDATION_PLAN.md).
 
-## 1. Infrastructure & Backend Setup
-**Status**: 🚧 Starting
-- **Tech Stack**: Node.js, Express, Socket.io.
-- **Database**: SQLite (Development) -> PostgreSQL (Production).
-- **Goal**: Create a robust server to handle authentication, game state, and user data.
+## Completed in the secure-foundation branch
 
-## 2. Authentication System
-**Status**: ⏳ Pending
-- **Features**: 
-  - Google OAuth Integration.
-  - JWT Session Management.
-  - Guest Accounts (for quick play).
-- **Security**: Rate limiting, token refresh.
+- Express/Socket.IO application split into testable runtime modules.
+- Server-issued guest sessions with signed JWT authentication for REST and sockets.
+- Removal of client-selected UUID authorization and fake currency deposit/exchange routes.
+- Persistent Coins and Gems with an immutable, idempotent ledger.
+- Server-defined Paystack packages, initialization, verification and signed webhook handling.
+- Server-side avatar ownership and balance validation.
+- Validated multiplayer rooms, moves, board bounds, best-of series, round readiness, rematches and reconnect state.
+- Transactional match persistence and one-time progression/currency rewards.
+- React integration with authenticated API/socket clients and server-backed balances.
+- Unit, integration, migration and two-client Socket.IO tests.
+- Lint/build/audit quality gates and GitHub Actions CI.
 
-## 3. Realtime Multiplayer (The "Battle" Tab)
-**Status**: ⏳ Pending
-- **Tech**: WebSockets (Socket.io).
-- **Features**:
-  - Room Creation/Joining (Codes).
-  - Matchmaking Queue.
-  - Real-time Board Sync.
-  - Spectator Mode.
+## Next product phase
 
-## 4. Database Schema & Persistence
-**Status**: ⏳ Pending
-- **Entities**:
-  - `Users` (Profile, Stats, Auth).
-  - `Matches` (History, Moves).
-  - `Inventory` (Items, Currency).
-- **Migration**: Move local storage stats to DB.
+1. Real Google OAuth account linking and guest-account upgrade.
+2. Paystack test-mode end-to-end checkout with a verified-email account.
+3. Match history and ledger screens in the UI.
+4. Ranked ELO and separate casual/ranked queues.
+5. Daily rewards, quests and achievements using the ledger.
+6. Additional Coin and Gem cosmetic categories.
+7. PostgreSQL migrations and Redis-backed room/presence state before horizontal scaling.
+8. Spectators, invitations, social features and tournaments.
 
-## 5. Gameplay Enhancements
-**Status**: ⏳ Pending
-- **Modes**: 
-  - Ranked Ladder (ELO system).
-  - Tournaments (Bracket system).
-- **Engine**: Move validation on server-side (Anti-cheat).
+## Production gate
 
-## 6. Economy & Shop
-**Status**: ⏳ Pending
-- **Features**:
-  - Server-side validation of purchases.
-  - Inventory management.
-  - Daily Rewards system.
-
----
-
-## Phase 1 Execution (Current Session)
-We will focus on **Infrastructure** and **Realtime Multiplayer Basis**.
-
-1.  Initialize `server/` with Node.js/Express.
-2.  Set up `Socket.io` handling.
-3.  Create a basic `sqlite` database for user persistence.
-4.  Update frontend to connect to the server.
-5.  Implement the "Battle" tab to allow Room functionality.
+Do not enable live payments until Google account linking, verified email, Paystack test-mode verification, webhook configuration, TLS, database backups and production monitoring are complete.

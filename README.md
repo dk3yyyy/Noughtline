@@ -1,68 +1,97 @@
-# 🕹️ Tic-Tac (Multiplayer Tic-Tac-Toe)
+# Tic-Tac
 
-[![GitHub release (latest by date)](https://img.shields.io/github/v/release/dk3yyyy/tic_tac)](https://github.com/dk3yyyy/tic_tac/releases)
-[![License: ISC](https://img.shields.io/badge/License-ISC-blue.svg)](https://opensource.org/licenses/ISC)
-[![React](https://img.shields.io/badge/Frontend-React%2019-blue?logo=react)](https://react.dev/)
-[![Node.js](https://img.shields.io/badge/Backend-Node.js-green?logo=nodedotjs)](https://nodejs.org/)
+A React, Express, Socket.IO and SQLite Tic-Tac-Toe game with authenticated guest sessions, server-authoritative multiplayer series, persistent progression, and a two-currency cosmetic economy.
 
-A premium, modern Tic-Tac-Toe game featuring real-time multiplayer, a built-in economy system, and an AI opponent. Designed with a sleek glassmorphism UI and powered by Socket.io and SQLite.
+## Current capabilities
 
-## ✨ Features
+- Single-player Tic-Tac-Toe against local AI on 3×3, 4×4 and 5×5 boards.
+- Authenticated real-time private rooms and matchmaking; private rooms are unranked and cannot mint progression or currency.
+- Server-validated moves, turns, board bounds, best-of-1/3/5 rounds and rematches.
+- Reconnection revokes the old socket and allows a 30-second grace period before one-time forfeit settlement.
+- Transactional match persistence and one-time server-issued XP, win/loss/draw, streak and Coin rewards for eligible matchmaking games.
+- Persistent Coins and Gems with an immutable currency ledger.
+- Coin- and Gem-priced avatar inventory with server-side ownership and balance checks.
+- Server-defined Paystack packages with server-side initialization, verification, signed webhook handling and idempotent crediting.
+- Authenticated profile export and account deletion.
+- Automated API, economy, room-state and two-client Socket.IO tests.
 
-- **🎮 Game Modes**:
-  - **Singleplayer**: Battle against an AI with multiple difficulty levels (Easy to Impossible).
-  - **Multiplayer**: Host private rooms or join strangers for a competitive match.
-- **💎 Economy & Shop**:
-  - Earn XP and coins by winning matches.
-  - Exchange tokens for gems to purchase exclusive avatars from the shop.
-  - GDPR-compliant data export and account deletion.
-- **📱 Modern UI**: Fully responsive design with dark/light modes, smooth animations (Framer Motion), and celebratory confetti.
+## Security model
 
-## 🚀 Getting Started
+The browser does not choose a UUID or submit its own reward/payment amount. `POST /api/auth/guest` creates an account on the server and returns a signed access token. Protected REST endpoints and Socket.IO connections derive the player from that token.
 
-### Prerequisites
-- [Node.js](https://nodejs.org/) (v18 or higher)
-- npm or yarn
+Production requires a strong `JWT_SECRET`. Startup fails if it is missing. CORS is allowlisted, request sizes are limited, REST requests are rate-limited, and security headers are enabled.
 
-### Installation
+Paid Gems fail closed when `PAYSTACK_SECRET_KEY` is absent. A balance is credited only after the server verifies the Paystack reference, NGN amount, currency and success state. The same reference can be credited only once.
 
-1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/dk3yyyy/tic_tac.git
-   cd tic_tac
-   ```
+Google OAuth is intentionally not mocked. Guest play works now; real Google account linking should be added only with provider credentials and server-side ID-token verification. Until then, guest accounts have no verified email and the paid-Gem UI will report that account linking is required.
 
-2. **Install dependencies**:
-   ```bash
-   npm install
-   cd server && npm install && cd ..
-   ```
+## Currency model
 
-3. **Set up environment variables**:
-   Create a `.env` file in the `server/` directory based on `.env.example`:
-   ```bash
-   cp server/.env.example server/.env
-   ```
+- **Coins** are earned from completed multiplayer series and buy standard cosmetics.
+- **Gems** are premium currency and buy premium cosmetics.
+- The prototype Token layer remains only as a legacy database column and is not exposed to the client.
 
-### Running the App
+Rewards are currently:
 
-Start both the frontend and backend simultaneously:
+| Result | XP | Coins |
+|---|---:|---:|
+| Win | 50 | 10 |
+| Draw | 25 | 5 |
+| Loss | 15 | 3 |
+
+Change rewards in the server settlement policy, not in the React client.
+
+## Local setup
+
+Requirements: Node.js 22+ and npm.
+
+```bash
+git clone https://github.com/dk3yyyy/tic_tac.git
+cd tic_tac
+npm ci
+npm ci --prefix server
+cp server/.env.example server/.env
+```
+
+For local development, replace `JWT_SECRET` in `server/.env` with a random value. Paid currency remains disabled when the Paystack key is blank.
+
 ```bash
 npm run dev:all
 ```
 
-- **Frontend**: [http://localhost:5173](http://localhost:5173)
-- **Backend**: [http://localhost:3000](http://localhost:3000)
+- Frontend: http://localhost:5173
+- API and Socket.IO: http://localhost:3000
+- Health check: http://localhost:3000/api/health
 
-## 🛠️ Tech Stack
+## Verification
 
-- **Frontend**: React 19, Vite, Framer Motion, Lucide React, Axios, Socket.io-client.
-- **Backend**: Node.js, Express 5, Socket.io, Better-SQLite3, Dotenv.
-- **Database**: SQLite (local persistence).
+```bash
+npm run lint
+npm test
+npm run build
+npm audit --omit=dev
+npm audit --prefix server --omit=dev
+```
 
-## 📄 License
+The tests include unauthenticated route rejection, removal of the fake deposit path, ledger idempotency, payment verification, move bounds, multi-round settlement and an authenticated two-client Socket.IO game.
 
-This project is licensed under the ISC License.
+## Production requirements
 
----
-Created with ❤️ by [dk3yyyy](https://github.com/dk3yyyy)
+Before deployment:
+
+1. Set a strong `JWT_SECRET`, exact `CORS_ORIGINS`, production `PUBLIC_APP_URL`, persistent `DATABASE_PATH` and Paystack secret.
+2. Configure the Paystack webhook to `POST /api/payments/paystack/webhook`.
+3. Add real account linking so buyers have verified email addresses.
+4. Put the service behind TLS and a trusted reverse proxy.
+5. Back up SQLite or migrate to PostgreSQL; use Redis or another shared state store before running multiple Socket.IO instances.
+6. Run CI and a Paystack test-mode transaction before enabling live payments.
+
+See [`docs/SECURE_FOUNDATION_PLAN.md`](docs/SECURE_FOUNDATION_PLAN.md) for architecture decisions, acceptance criteria and deferred features.
+
+## Deferred features
+
+Ranked ELO, tournaments, spectators, chat, social accounts, quests, daily rewards, seasonal progression, PostgreSQL and horizontally shared room state are intentionally deferred until this foundation is reviewed and deployed safely.
+
+## License
+
+ISC. A standalone `LICENSE` file should be added before publishing a formal release.

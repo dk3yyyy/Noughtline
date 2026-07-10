@@ -1,35 +1,35 @@
 class Matchmaker {
-    constructor() {
-        this.queue = []; // Array of { socketId, username, uuid, timestamp }
-    }
+  constructor() {
+    this.queue = [];
+  }
 
-    addToQueue(player) {
-        // Avoid duplicates
-        if (this.queue.find(p => p.uuid === player.uuid)) return;
+  addToQueue(player) {
+    if (!Number.isSafeInteger(player.userId)) return false;
+    if (this.queue.some((entry) => entry.userId === player.userId)) return false;
+    this.queue.push({ ...player, timestamp: Date.now() });
+    return true;
+  }
 
-        this.queue.push({
-            ...player,
-            timestamp: Date.now()
-        });
-        console.log(`Player ${player.username} added to matchmaker queue. Queue size: ${this.queue.length}`);
-    }
+  removeFromQueue(socketId) {
+    this.queue = this.queue.filter((player) => player.socketId !== socketId);
+  }
 
-    removeFromQueue(socketId) {
-        this.queue = this.queue.filter(p => p.socketId !== socketId);
+  findMatch() {
+    while (this.queue.length >= 2) {
+      const player1 = this.queue.shift();
+      const player2 = this.queue.shift();
+      if (player1.socketId !== player2.socketId && player1.userId !== player2.userId) return { player1, player2 };
     }
+    return null;
+  }
 
-    findMatch() {
-        if (this.queue.length >= 2) {
-            const player1 = this.queue.shift();
-            const player2 = this.queue.shift();
-            return { player1, player2 };
-        }
-        return null;
-    }
-
-    getQueuePlayers() {
-        return this.queue;
-    }
+  expiredPlayers(timeoutMs) {
+    const cutoff = Date.now() - timeoutMs;
+    const expired = this.queue.filter((player) => player.timestamp < cutoff);
+    const expiredIds = new Set(expired.map((player) => player.socketId));
+    this.queue = this.queue.filter((player) => !expiredIds.has(player.socketId));
+    return expired;
+  }
 }
 
-module.exports = new Matchmaker();
+module.exports = { Matchmaker };
