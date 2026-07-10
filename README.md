@@ -1,8 +1,10 @@
-# Noughtline
+# 🎮 Noughtline
 
-Noughtline is a React, Express, Socket.IO and SQLite Tic-Tac-Toe game with authenticated guest sessions, server-authoritative multiplayer series, persistent progression, and a two-currency cosmetic economy.
+**Classic Tic-Tac-Toe, rebuilt as a secure real-time multiplayer experience.**
 
-## Current capabilities
+Noughtline combines React, Express, Socket.IO, and SQLite to deliver authenticated guest sessions, server-authoritative multiplayer series, persistent progression, and a two-currency cosmetic economy.
+
+## ✨ What you can do
 
 - Single-player Tic-Tac-Toe against local AI on 3×3, 4×4 and 5×5 boards.
 - Authenticated real-time private rooms and matchmaking; private rooms are unranked and cannot mint progression or currency.
@@ -17,7 +19,7 @@ Noughtline is a React, Express, Socket.IO and SQLite Tic-Tac-Toe game with authe
 - Authenticated profile export and account deletion.
 - Automated API, economy, room-state and two-client Socket.IO tests.
 
-## Security model
+## 🛡️ Security model
 
 The browser does not choose a UUID or submit its own reward/payment amount. `POST /api/auth/guest` creates an account on the server and returns a signed access token. Protected REST endpoints and Socket.IO connections derive the player from that token.
 
@@ -27,7 +29,7 @@ Paid Gems fail closed when `PAYSTACK_SECRET_KEY` is absent. A balance is credite
 
 Google OAuth is intentionally not mocked. Guest play works now; real Google account linking should be added only with provider credentials and server-side ID-token verification. Until then, guest accounts have no verified email and the paid-Gem UI will report that account linking is required.
 
-## Currency model
+## 🪙 Currency model
 
 - **Coins** are earned from completed multiplayer series and buy standard cosmetics.
 - **Gems** are premium currency and buy premium cosmetics.
@@ -43,7 +45,7 @@ Rewards are currently:
 
 Change rewards in the server settlement policy, not in the React client.
 
-## Local setup
+## 🚀 Run locally
 
 Requirements: Node.js 22+ and npm.
 
@@ -65,7 +67,7 @@ npm run dev:all
 - API and Socket.IO: http://localhost:3000
 - Health check: http://localhost:3000/api/health
 
-## Verification
+## ✅ Test and verify
 
 ```bash
 npm run lint
@@ -78,7 +80,7 @@ npm audit --prefix server --omit=dev
 
 The tests cover unauthenticated route rejection, removal of the fake deposit path, ledger idempotency, payment verification, move bounds, multi-round settlement, invite/reconnect recovery, one-active-room enforcement, voluntary forfeits, lifecycle limits, and isolated-browser multiplayer flows.
 
-## Production requirements
+## 🌐 Production checklist
 
 Before deployment:
 
@@ -91,10 +93,10 @@ Before deployment:
 
 See [`docs/SECURE_FOUNDATION_PLAN.md`](docs/SECURE_FOUNDATION_PLAN.md), [`docs/PLAYER_LIFECYCLE_PLAN.md`](docs/PLAYER_LIFECYCLE_PLAN.md), and [`docs/SHARED_MULTIPLAYER_STATE_PLAN.md`](docs/SHARED_MULTIPLAYER_STATE_PLAN.md) for architecture decisions, acceptance criteria, and the horizontal-scaling migration path.
 
-## Deferred features
+## 🗺️ What comes next
 
 Ranked ELO, tournaments, spectators, chat, social accounts, quests, daily rewards, seasonal progression, PostgreSQL and horizontally shared room state are intentionally deferred until this foundation is reviewed and deployed safely.
 
-## License
+## 📄 License
 
 ISC. A standalone `LICENSE` file should be added before publishing a formal release.
