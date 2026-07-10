@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: noughtline
+    runtime: node
+    plan: free
+    region: frankfurt
+    branch: main
+    buildCommand: npm ci && npm ci --prefix server && npm run build
+    startCommand: npm run server
+    healthCheckPath: /api/health
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: JWT_EXPIRES_IN
+        value: 30d
+      - key: DATABASE_PATH
+        value: /tmp/noughtline.db
+      - key: ROOM_ACTION_RATE_LIMIT
+        value: "30"
+      - key: ROOM_ACTION_RATE_WINDOW_MS
+        value: "60000"
