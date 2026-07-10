@@ -224,6 +224,71 @@ test('leaving a terminal room only acknowledges it and permits a new room', () =
   manager.createRoom('ROOM_NEW', { size: 3, rounds: 3 });
   const joined = manager.joinRoom('ROOM_NEW', { userId: 1, socketId: 'a', username: 'A' });
   assert.equal(joined.room.id, 'ROOM_NEW');
+  assert.equal(manager.requestRematch('ROOM_TEST', 1, 'a').code, 'NOT_ROOM_MEMBER');
+});
+
+test('rematch cannot reactivate a terminal room when either player joined elsewhere', () => {
+  const manager = new RoomManager();
+  manager.createRoom('ROOM_TEST', { size: 3, rounds: 1 });
+  manager.joinRoom('ROOM_TEST', { userId: 1, socketId: 'a', username: 'A' });
+  manager.joinRoom('ROOM_TEST', { userId: 2, socketId: 'b', username: 'B' });
+  playXWin(manager);
+  manager.createRoom('ROOM_OTHER', { size: 3, rounds: 3 });
+  manager.joinRoom('ROOM_OTHER', { userId: 1, socketId: 'a', username: 'A' });
+
+  const blocked = manager.requestRematch('ROOM_TEST', 2, 'b');
+  assert.equal(blocked.code, 'ACTIVE_ROOM_EXISTS');
+  assert.equal(blocked.roomId, 'ROOM_OTHER');
+  assert.equal(manager.getRoom('ROOM_TEST').state.status, 'complete');
+  assert.equal(manager.getRoom('ROOM_TEST').rematchReady.size, 0);
+});
+
+test('forfeit after a completed round does not inflate rounds played', () => {
+  const settlements = [];
+  const manager = new RoomManager({ onSeriesComplete: (_room, history) => settlements.push(history) });
+  joinTwo(manager);
+  playXWin(manager);
+
+  const result = manager.leaveRoom('ROOM_TEST', 1, 'a');
+  assert.equal(result.room.state.seriesWinner, 'O');
+  assert.equal(settlements[0].length, 1);
+  assert.equal(settlements[0][0].winner, 'X');
+  assert.equal(settlements[0][0].reason, 'voluntary_forfeit');
+});
+
+test('settlement failure rolls back a forfeit and permits a safe retry', () => {
+  const manager = new RoomManager({ onSeriesComplete: () => { throw new Error('database unavailable'); } });
+  joinTwo(manager);
+
+  assert.throws(() => manager.leaveRoom('ROOM_TEST', 1, 'a'), /database unavailable/);
+  const rolledBack = manager.getRoom('ROOM_TEST');
+  assert.equal(rolledBack.state.status, 'active');
+  assert.deepEqual(rolledBack.state.score, { X: 0, O: 0 });
+  assert.equal(rolledBack.roundHistory.length, 0);
+  assert.equal(rolledBack.players.find((player) => player.id === 1).connected, true);
+
+  manager.onSeriesComplete = () => {};
+  assert.equal(manager.leaveRoom('ROOM_TEST', 1, 'a').room.state.status, 'complete');
+});
+
+test('settlement failure rolls back a series-winning move and permits a safe retry', () => {
+  const manager = new RoomManager({ onSeriesComplete: () => { throw new Error('database unavailable'); } });
+  manager.createRoom('ROOM_TEST', { size: 3, rounds: 1 });
+  manager.joinRoom('ROOM_TEST', { userId: 1, socketId: 'a', username: 'A' });
+  manager.joinRoom('ROOM_TEST', { userId: 2, socketId: 'b', username: 'B' });
+  manager.makeMove('ROOM_TEST', 0, 1, 'a');
+  manager.makeMove('ROOM_TEST', 3, 2, 'b');
+  manager.makeMove('ROOM_TEST', 1, 1, 'a');
+  manager.makeMove('ROOM_TEST', 4, 2, 'b');
+
+  assert.throws(() => manager.makeMove('ROOM_TEST', 2, 1, 'a'), /database unavailable/);
+  const rolledBack = manager.getRoom('ROOM_TEST');
+  assert.equal(rolledBack.state.status, 'active');
+  assert.equal(rolledBack.state.board[2], null);
+  assert.equal(rolledBack.roundHistory.length, 0);
+
+  manager.onSeriesComplete = () => {};
+  assert.equal(manager.makeMove('ROOM_TEST', 2, 1, 'a').room.state.status, 'complete');
 });
 
 test('plays a best-of-three series and settles exactly once', () => {

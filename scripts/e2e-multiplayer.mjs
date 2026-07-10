@@ -258,12 +258,20 @@ try {
   await evaluate(cdp, third, `document.querySelector('.back-btn').click(); true`);
   const waitingLeaveTitle = await waitFor(cdp, third, `document.querySelector('#leave-room-title')?.textContent`, 'waiting-room leave confirmation');
   if (waitingLeaveTitle !== 'Leave waiting room?') throw new Error(`Unexpected waiting leave copy: ${waitingLeaveTitle}`);
+  const waitingSafeFocus = await evaluate(cdp, third, `document.activeElement?.innerText`);
+  if (waitingSafeFocus !== 'Stay in room') throw new Error(`Waiting dialog focused ${waitingSafeFocus} instead of safe action`);
   await clickButton(cdp, third, 'Leave room');
   await waitFor(cdp, third, `Boolean(document.querySelector('.home-screen'))`, 'waiting host returned home');
 
   await evaluate(cdp, host, `document.querySelector('.back-btn').click(); true`);
   const forfeitTitle = await waitFor(cdp, host, `document.querySelector('#leave-room-title')?.textContent`, 'forfeit confirmation');
   if (forfeitTitle !== 'Forfeit this match?') throw new Error(`Unexpected forfeit copy: ${forfeitTitle}`);
+  const forfeitSafeFocus = await evaluate(cdp, host, `document.activeElement?.innerText`);
+  if (forfeitSafeFocus !== 'Stay in match') throw new Error(`Forfeit dialog focused ${forfeitSafeFocus} instead of safe action`);
+  await evaluate(cdp, host, `document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); true`);
+  await waitFor(cdp, host, `Boolean(!document.querySelector('#leave-room-title') && document.querySelector('.game-screen'))`, 'forfeit cancellation');
+  await evaluate(cdp, host, `document.querySelector('.back-btn').click(); true`);
+  await waitFor(cdp, host, `document.querySelector('#leave-room-title')?.textContent === 'Forfeit this match?'`, 'reopened forfeit confirmation');
   const hostScreenshot = await screenshot(cdp, host, '_e2e-host-forfeit.png');
   await clickButton(cdp, host, 'Forfeit match');
   await waitFor(cdp, host, `Boolean(document.querySelector('.home-screen'))`, 'forfeiter returned home');

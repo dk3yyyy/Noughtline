@@ -102,6 +102,35 @@ class RoomManager {
     };
   }
 
+  captureMutableRoom(room) {
+    return {
+      players: room.players.map((player) => ({ ...player })),
+      state: {
+        ...room.state,
+        board: [...room.state.board],
+        winningLine: [...room.state.winningLine],
+        score: { ...room.state.score },
+      },
+      roundHistory: room.roundHistory.map((entry) => ({ ...entry, board: [...entry.board] })),
+      nextRoundReady: new Set(room.nextRoundReady),
+      rematchReady: new Set(room.rematchReady),
+      resumeStatus: room.resumeStatus,
+      settled: room.settled,
+      updatedAt: room.updatedAt,
+    };
+  }
+
+  restoreMutableRoom(room, snapshot) {
+    room.players = snapshot.players;
+    room.state = snapshot.state;
+    room.roundHistory = snapshot.roundHistory;
+    room.nextRoundReady = snapshot.nextRoundReady;
+    room.rematchReady = snapshot.rematchReady;
+    room.resumeStatus = snapshot.resumeStatus;
+    room.settled = snapshot.settled;
+    room.updatedAt = snapshot.updatedAt;
+  }
+
   syncConnectionState(room, { secondPlayerJoined = false } = {}) {
     if (room.state.status === 'complete' || room.state.status === 'cancelled') {
       room.state.disconnectDeadline = null;
@@ -188,6 +217,7 @@ class RoomManager {
     if (player.symbol !== expected) return { error: 'Not your turn' };
     if (room.state.board[index] !== null) return { error: 'Cell is occupied' };
 
+    const rollbackSnapshot = this.captureMutableRoom(room);
     room.state.board[index] = player.symbol;
     room.state.isXNext = !room.state.isXNext;
     room.updatedAt = this.now();
@@ -216,8 +246,13 @@ class RoomManager {
         ? 'Draw'
         : room.state.score.X > room.state.score.O ? 'X' : 'O';
       if (!room.settled) {
-        this.onSeriesComplete(this.publicRoom(room), room.roundHistory.map((entry) => ({ ...entry, board: [...entry.board] })));
-        room.settled = true;
+        try {
+          this.onSeriesComplete(this.publicRoom(room), room.roundHistory.map((entry) => ({ ...entry, board: [...entry.board] })));
+          room.settled = true;
+        } catch (error) {
+          this.restoreMutableRoom(room, rollbackSnapshot);
+          throw error;
+        }
       }
     } else {
       room.state.status = 'round_complete';
@@ -230,7 +265,7 @@ class RoomManager {
     const room = this.getRoom(roomId);
     if (!room) return { error: 'Room not found' };
     if (room.state.status !== 'round_complete') return { error: 'Round is not complete' };
-    if (!room.players.some((player) => player.id === userId && player.connected && player.socketId === socketId)) return { error: 'Player is not in this room' };
+    if (!room.players.some((player) => player.id === userId && player.connected && player.socketId === socketId)) return failure('NOT_ROOM_MEMBER');
     room.nextRoundReady.add(userId);
     if (room.nextRoundReady.size < 2) return { room: this.publicRoom(room), waiting: true };
 
@@ -247,7 +282,11 @@ class RoomManager {
     const room = this.getRoom(roomId);
     if (!room) return { error: 'Room not found' };
     if (room.state.status !== 'complete') return { error: 'Series is not complete' };
-    if (!room.players.some((player) => player.id === userId && player.connected && player.socketId === socketId)) return { error: 'Player is not in this room' };
+    if (!room.players.some((player) => player.id === userId && player.connected && player.socketId === socketId)) return failure('NOT_ROOM_MEMBER');
+    for (const player of room.players) {
+      const activeRoom = this.findActiveRoomForUser(player.id, { excludingRoomId: room.id });
+      if (activeRoom) return failure('ACTIVE_ROOM_EXISTS', { roomId: activeRoom.id });
+    }
     room.rematchReady.add(userId);
     if (room.rematchReady.size < 2) return { room: this.publicRoom(room), waiting: true };
 
@@ -261,28 +300,39 @@ class RoomManager {
     return { room: this.publicRoom(room), waiting: false };
   }
 
-  settleForfeit(room, winner, reason) {
-    room.state.status = 'complete';
-    room.state.winner = winner.symbol;
-    room.state.seriesWinner = winner.symbol;
-    room.state.completionReason = reason;
-    room.state.disconnectDeadline = null;
-    room.resumeStatus = null;
-    room.state.score[winner.symbol] += 1;
-    room.nextRoundReady.clear();
-    room.rematchReady.clear();
-    room.roundHistory.push({
-      round: room.state.round,
-      winner: winner.symbol,
-      board: [...room.state.board],
-      reason,
-    });
-    if (!room.settled) {
-      this.onSeriesComplete(this.publicRoom(room), room.roundHistory.map((entry) => ({ ...entry, board: [...entry.board] })));
-      room.settled = true;
+  settleForfeit(room, winner, reason, rollbackSnapshot = this.captureMutableRoom(room)) {
+    try {
+      const completedRound = room.state.status === 'round_complete'
+        || (room.state.status === 'paused' && room.resumeStatus === 'round_complete');
+      room.state.status = 'complete';
+      room.state.winner = winner.symbol;
+      room.state.seriesWinner = winner.symbol;
+      room.state.completionReason = reason;
+      room.state.disconnectDeadline = null;
+      room.resumeStatus = null;
+      room.state.score[winner.symbol] += 1;
+      room.nextRoundReady.clear();
+      room.rematchReady.clear();
+      if (completedRound && room.roundHistory.length > 0) {
+        Object.assign(room.roundHistory.at(-1), { reason, seriesWinner: winner.symbol });
+      } else {
+        room.roundHistory.push({
+          round: room.state.round,
+          winner: winner.symbol,
+          board: [...room.state.board],
+          reason,
+        });
+      }
+      if (!room.settled) {
+        this.onSeriesComplete(this.publicRoom(room), room.roundHistory.map((entry) => ({ ...entry, board: [...entry.board] })));
+        room.settled = true;
+      }
+      room.updatedAt = this.now();
+      return this.publicRoom(room);
+    } catch (error) {
+      this.restoreMutableRoom(room, rollbackSnapshot);
+      throw error;
     }
-    room.updatedAt = this.now();
-    return this.publicRoom(room);
   }
 
   leaveRoom(roomId, userId, socketId) {
@@ -305,9 +355,10 @@ class RoomManager {
 
     const opponent = room.players.find((entry) => entry.id !== userId);
     if (!opponent) return failure('NOT_ROOM_MEMBER');
+    const rollbackSnapshot = this.captureMutableRoom(room);
     player.connected = false;
     player.disconnectedAt = this.now();
-    return { room: this.settleForfeit(room, opponent, 'voluntary_forfeit') };
+    return { room: this.settleForfeit(room, opponent, 'voluntary_forfeit', rollbackSnapshot) };
   }
 
   disconnectAll(socketId) {

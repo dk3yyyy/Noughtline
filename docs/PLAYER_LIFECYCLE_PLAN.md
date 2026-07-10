@@ -124,6 +124,18 @@ This reduces single-instance abuse but is not a distributed control. The shared-
 - Existing move authority, rewards, private-room gating, reconnect behavior, and invite flows remain green.
 - Public two-browser testing verifies waiting-room leave, active forfeit, opponent result, and subsequent new-room entry.
 
+## Independent audit reconciliation
+
+The post-implementation lifecycle and UX audits were reconciled in a follow-up hardening pass:
+
+- terminal acknowledgement revokes socket action authority;
+- rematches cannot reactivate a completed room when either participant has joined another nonterminal room;
+- settlement callback failures restore the exact preterminal in-memory state so the transactional database operation can be retried safely;
+- a forfeit during `round_complete` annotates the completed round instead of inflating `rounds_played`;
+- matchmaking removes all queued sockets for a disconnected user, skips dead or ineligible dequeues, and deletes only rooms created by the failed match attempt;
+- terminal client messaging uses `seriesWinner`, while round state continues to use `winner`;
+- confirmation dialogs initially focus the safe action, trap keyboard focus, support Escape cancellation, and expose `aria-busy` while submitting.
+
 ## Shared-state follow-up deliverable
 
 Produce `docs/SHARED_MULTIPLAYER_STATE_PLAN.md` specifying:

@@ -341,7 +341,7 @@ function createRuntime({ config, database, fetchImpl, startTimers = true } = {})
     });
 
     socket.on('disconnect', () => {
-      matchmaker.removeFromQueue(socket.id);
+      matchmaker.removeUser(socket.user.id);
       for (const result of roomManager.disconnectAll(socket.id)) {
         io.to(result.roomId).emit('room_update', result.room);
       }
@@ -351,18 +351,39 @@ function createRuntime({ config, database, fetchImpl, startTimers = true } = {})
   const timers = [];
   if (startTimers) {
     timers.push(setInterval(() => {
-      const match = matchmaker.findMatch();
+      const isMatchEligible = (player) => {
+        const candidateSocket = io.sockets.sockets.get(player.socketId);
+        return candidateSocket?.connected === true
+          && candidateSocket.user?.id === player.userId
+          && !roomManager.findActiveRoomForUser(player.userId);
+      };
+      const match = matchmaker.findMatch(isMatchEligible);
       if (match) {
         const roomId = randomRoomId('MATCH_');
-        roomManager.createRoom(roomId, { size: 3, rounds: 3 }, { rewardEligible: true });
-        const first = roomManager.joinRoom(roomId, match.player1);
-        const second = roomManager.joinRoom(roomId, match.player2);
-        io.sockets.sockets.get(match.player1.socketId)?.join(roomId);
-        io.sockets.sockets.get(match.player2.socketId)?.join(roomId);
-        const publicRoom = second.room || first.room;
-        io.to(match.player1.socketId).emit('match_found', { roomId, opponent: match.player2.username, opponentAvatar: match.player2.avatar, symbol: 'X', room: publicRoom });
-        io.to(match.player2.socketId).emit('match_found', { roomId, opponent: match.player1.username, opponentAvatar: match.player1.avatar, symbol: 'O', room: publicRoom });
-        io.to(roomId).emit('room_update', publicRoom);
+        const created = roomManager.createRoom(roomId, { size: 3, rounds: 3 }, { rewardEligible: true });
+        if (created.error) {
+          for (const player of [match.player1, match.player2]) matchmaker.addToQueue(player);
+        } else {
+          const first = roomManager.joinRoom(roomId, match.player1);
+          const second = first.error ? first : roomManager.joinRoom(roomId, match.player2);
+          if (first.error || second.error) {
+            roomManager.deleteRoom(roomId);
+            for (const player of [match.player1, match.player2]) {
+              if (isMatchEligible(player)) matchmaker.addToQueue(player);
+              else io.to(player.socketId).emit('game_error', gameErrorPayload({
+                error: 'Matchmaking state changed. Try again.',
+                code: 'MATCHMAKING_CONFLICT',
+              }));
+            }
+          } else {
+            io.sockets.sockets.get(match.player1.socketId)?.join(roomId);
+            io.sockets.sockets.get(match.player2.socketId)?.join(roomId);
+            const publicRoom = second.room;
+            io.to(match.player1.socketId).emit('match_found', { roomId, opponent: match.player2.username, opponentAvatar: match.player2.avatar, symbol: 'X', room: publicRoom });
+            io.to(match.player2.socketId).emit('match_found', { roomId, opponent: match.player1.username, opponentAvatar: match.player1.avatar, symbol: 'O', room: publicRoom });
+            io.to(roomId).emit('room_update', publicRoom);
+          }
+        }
       }
       for (const player of matchmaker.expiredPlayers(15_000)) io.to(player.socketId).emit('match_fallback_ai');
       for (const result of roomManager.resolveDisconnectTimeouts()) io.to(result.roomId).emit('room_update', result.room);

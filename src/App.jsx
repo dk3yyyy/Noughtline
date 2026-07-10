@@ -532,6 +532,26 @@ const SearchingMatchModal = ({ show, onCancel }) => {
   );
 };
 
+const handleDialogKeyDown = (event, pending, onClose) => {
+  if (event.key === 'Escape' && !pending) {
+    event.preventDefault();
+    onClose();
+    return;
+  }
+  if (event.key !== 'Tab') return;
+  const focusable = [...event.currentTarget.querySelectorAll('button:not(:disabled), [href], input:not(:disabled)')];
+  if (focusable.length === 0) return;
+  const first = focusable[0];
+  const last = focusable.at(-1);
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+};
+
 const LeaveRoomModal = ({ show, gameStatus, hasOpponent, pending, onCancel, onConfirm }) => {
   if (!show) return null;
   const abandonsInvite = gameStatus === 'waiting' && !hasOpponent;
@@ -546,10 +566,11 @@ const LeaveRoomModal = ({ show, gameStatus, hasOpponent, pending, onCancel, onCo
         className="modal-content multiplayer-menu leave-room-dialog"
         role="alertdialog"
         aria-modal="true"
+        aria-busy={pending}
         aria-labelledby="leave-room-title"
         aria-describedby="leave-room-description"
         onClick={event => event.stopPropagation()}
-        onKeyDown={event => { if (event.key === 'Escape' && !pending) onCancel(); }}
+        onKeyDown={event => handleDialogKeyDown(event, pending, onCancel)}
         initial={{ scale: 0.96, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
       >
@@ -557,10 +578,12 @@ const LeaveRoomModal = ({ show, gameStatus, hasOpponent, pending, onCancel, onCo
         <h2 id="leave-room-title" className="modal-title">{title}</h2>
         <p id="leave-room-description" className="modal-description">{description}</p>
         <div className="btn-stack">
-          <button type="button" className="btn-danger" onClick={onConfirm} disabled={pending} autoFocus>
+          <button type="button" className="btn-danger" onClick={onConfirm} disabled={pending}>
             <LogOut size={17} /> {pending ? 'Leaving…' : abandonsInvite ? 'Leave room' : 'Forfeit match'}
           </button>
-          <button type="button" className="btn-gray" onClick={onCancel} disabled={pending}>Stay in match</button>
+          <button type="button" className="btn-gray" onClick={onCancel} disabled={pending} autoFocus>
+            {abandonsInvite ? 'Stay in room' : 'Stay in match'}
+          </button>
         </div>
       </motion.div>
     </div>
@@ -575,9 +598,11 @@ const ActiveRoomModal = ({ roomId, pending, onResume, onCopy, onClose }) => {
         className="modal-content multiplayer-menu"
         role="dialog"
         aria-modal="true"
+        aria-busy={pending}
         aria-labelledby="active-room-title"
         aria-describedby="active-room-description"
         onClick={event => event.stopPropagation()}
+        onKeyDown={event => handleDialogKeyDown(event, pending, onClose)}
         initial={{ scale: 0.96, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
       >
@@ -586,7 +611,7 @@ const ActiveRoomModal = ({ roomId, pending, onResume, onCopy, onClose }) => {
         <p id="active-room-description" className="modal-description">Resume your current room before starting another.</p>
         <div className="invite-code-panel"><span>Active room</span><strong>{roomId}</strong></div>
         <div className="btn-stack">
-          <button type="button" className="btn-pink" onClick={onResume} disabled={pending}>{pending ? 'Resuming…' : 'Resume match'}</button>
+          <button type="button" className="btn-pink" onClick={onResume} disabled={pending} autoFocus>{pending ? 'Resuming…' : 'Resume match'}</button>
           <button type="button" className="btn-gray" onClick={onCopy}><Copy size={17} /> Copy invite</button>
           <button type="button" className="btn-gray" onClick={onClose} disabled={pending}>Close</button>
         </div>
@@ -604,6 +629,7 @@ const useTicTacToe = (gameConfig, setGameConfig, sounds, user) => {
   const [board, setBoard] = useState(Array(boardSize * boardSize).fill(null));
   const [isXNext, setIsXNext] = useState(true);
   const [winner, setWinner] = useState(null);
+  const [seriesWinner, setSeriesWinner] = useState(null);
   const [winningLine, setWinningLine] = useState([]);
   const [isActionPending, setIsActionPending] = useState(false); // For network ops
   const [mySymbol, setMySymbol] = useState('X');
@@ -620,6 +646,7 @@ const useTicTacToe = (gameConfig, setGameConfig, sounds, user) => {
     setBoard(Array(boardSize * boardSize).fill(null));
     setIsXNext(true);
     setWinner(null);
+    setSeriesWinner(null);
     setWinningLine([]);
     setIsActionPending(false);
     setGameStatus(mode === 'singleplayer' ? 'active' : 'waiting');
@@ -636,6 +663,7 @@ const useTicTacToe = (gameConfig, setGameConfig, sounds, user) => {
         setBoard(room.state.board);
         setIsXNext(room.state.isXNext);
         setWinner(room.state.winner);
+        setSeriesWinner(room.state.seriesWinner || null);
         setWinningLine(room.state.winningLine);
         setGameStatus(room.state.status);
         setRound(room.state.round);
@@ -844,6 +872,7 @@ const useTicTacToe = (gameConfig, setGameConfig, sounds, user) => {
     setBoard(Array(boardSize * boardSize).fill(null));
     setIsXNext(true);
     setWinner(null);
+    setSeriesWinner(null);
     setWinningLine([]);
   };
 
@@ -851,7 +880,7 @@ const useTicTacToe = (gameConfig, setGameConfig, sounds, user) => {
   const requestRematch = () => socket.emit('request_rematch', { roomId });
 
   return {
-    board, handleClick, winner, winningLine, isXNext, resetGame, mySymbol,
+    board, handleClick, winner, seriesWinner, winningLine, isXNext, resetGame, mySymbol,
     gameStatus, round, score, readyNextRound, requestRematch, roomPlayers,
     disconnectDeadline, completionReason, actionError,
   };
@@ -986,10 +1015,11 @@ export default function App() {
 
   const sounds = useSound(userConfig.sound);
   const {
-    board, handleClick, winner, winningLine, isXNext, resetGame, mySymbol,
+    board, handleClick, winner, seriesWinner, winningLine, isXNext, resetGame, mySymbol,
     gameStatus, round, score, readyNextRound, requestRematch, roomPlayers,
     disconnectDeadline, completionReason, actionError,
   } = useTicTacToe(gameConfig, setGameConfig, sounds, user);
+  const resultWinner = gameStatus === 'complete' ? (seriesWinner || winner) : winner;
   const opponentPlayer = roomPlayers.find(player => player.id !== user.id);
   const opponentDisconnected = gameConfig.mode === 'multiplayer' && opponentPlayer?.connected === false;
   const [disconnectSeconds, setDisconnectSeconds] = useState(0);
@@ -1107,8 +1137,8 @@ export default function App() {
   }, [activeTab]);
 
   useEffect(() => {
-    const isWin = winner === mySymbol;
-    const isLoss = winner && winner !== 'Draw' && winner !== mySymbol;
+    const isWin = resultWinner === mySymbol;
+    const isLoss = resultWinner && resultWinner !== 'Draw' && resultWinner !== mySymbol;
 
     if (isWin) {
       sounds.playWin();
@@ -1121,7 +1151,7 @@ export default function App() {
     } else if (isLoss) {
       sounds.playLose();
     }
-  }, [winner, mySymbol, sounds]);
+  }, [resultWinner, mySymbol, sounds]);
 
   useEffect(() => {
     if (gameConfig.mode === 'multiplayer' && gameStatus === 'complete') fetchUserData();
@@ -1676,15 +1706,17 @@ export default function App() {
                     </span>
                   ) : gameConfig.mode === 'multiplayer' && gameStatus === 'cancelled' ? (
                     <span className="cancelled-status">Match cancelled — neither player reconnected in time.</span>
-                  ) : winner ? (
+                  ) : resultWinner ? (
                     <motion.span
                       initial={{ scale: 0.5 }}
                       animate={{ scale: 1.08 }}
                       className="winner-text"
                     >
                       {['disconnect_forfeit', 'voluntary_forfeit'].includes(completionReason)
-                        ? (winner === mySymbol ? 'Opponent forfeited — you win!' : 'You forfeited — opponent wins.')
-                        : winner === 'Draw' ? "It's a Draw!" : `${winner === mySymbol ? 'You' : 'Opponent'} Won!`}
+                        ? (resultWinner === mySymbol ? 'Opponent forfeited — you win the series.' : 'You forfeited — opponent wins the series.')
+                        : gameConfig.mode === 'multiplayer' && gameStatus === 'complete'
+                          ? resultWinner === 'Draw' ? 'Series complete — draw.' : `Series complete — ${resultWinner === mySymbol ? 'you win.' : 'opponent wins.'}`
+                          : resultWinner === 'Draw' ? "It's a Draw!" : `${resultWinner === mySymbol ? 'You' : 'Opponent'} Won!`}
                     </motion.span>
                   ) : (
                     <span className="animate-pulse">{isXNext === (mySymbol === 'X') ? "> Your Turn" : "> Opponent Turn"}</span>
