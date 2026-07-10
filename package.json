@@ -11,7 +11,10 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "npm --prefix server test"
+    "test:client": "node --test test/*.test.js",
+    "test:server": "npm --prefix server test",
+    "test:e2e": "node scripts/e2e-multiplayer.mjs",
+    "test": "npm run test:client && npm run test:server"
   },
   "dependencies": {
     "axios": "^1.18.1",

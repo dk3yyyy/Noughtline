@@ -1411,3 +1411,199 @@
   .btn-primary.ai { min-height: 96px; }
   .gem-grid { grid-template-columns: 1fr; }
 }
+
+/* Multiplayer invitation and recovery */
+.recovery-toast {
+  position: fixed;
+  top: 76px;
+  right: 18px;
+  z-index: 2500;
+  max-width: min(380px, calc(100vw - 36px));
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 11px 12px 11px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  color: var(--text-main);
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-dialog);
+  font-size: 0.78rem;
+}
+
+.recovery-toast button {
+  width: 28px;
+  min-height: 28px;
+  padding: 0;
+  border: 0;
+  color: var(--text-secondary);
+  background: transparent;
+  font-size: 1.1rem;
+}
+
+.room-summary-actions,
+.share-actions {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.room-summary-actions { grid-template-columns: 1fr 1fr; }
+.share-actions { grid-template-columns: repeat(3, 1fr); }
+
+.player-card.disconnected {
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+  background: color-mix(in srgb, var(--danger) 7%, transparent);
+  opacity: 0.82;
+}
+
+.player-card.disconnected img { opacity: 0.5; }
+
+.player-connection-state {
+  grid-column: 2;
+  grid-row: 2;
+  color: var(--danger);
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+}
+
+.turn-indicator.paused { color: #f6b84b; }
+
+.disconnect-countdown {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, #f6b84b 35%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, #f6b84b 8%, transparent);
+}
+
+.modal-heading-icon {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 18px;
+  border: 1px solid rgba(124, 108, 255, 0.35);
+  border-radius: 9px;
+  color: var(--accent-purple-hover);
+  background: var(--accent-purple-soft);
+}
+
+.modal-description {
+  margin-bottom: 22px;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  line-height: 1.55;
+}
+
+.room-code-input {
+  width: 100%;
+  min-height: 52px;
+  margin-top: 8px;
+  padding: 0 13px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-main);
+  background: var(--surface);
+  font-family: var(--font-mono);
+  font-size: 0.86rem;
+}
+
+.room-code-input:focus {
+  outline: 2px solid var(--accent-purple-soft);
+  border-color: var(--accent-purple);
+}
+
+.room-code-input[aria-invalid='true'] { border-color: var(--danger); }
+
+.form-error {
+  margin-top: 9px;
+  color: var(--danger);
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.invite-code-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+}
+
+.invite-code-label {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.invite-code-panel strong {
+  color: var(--text-main);
+  font-family: var(--font-mono);
+  font-size: 1.2rem;
+  letter-spacing: 0.04em;
+}
+
+.invite-url {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.share-actions { margin-top: 10px; }
+
+.share-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+}
+
+.share-feedback {
+  min-height: 18px;
+  margin-top: 8px;
+  color: var(--success);
+  font-size: 0.7rem;
+}
+
+.share-feedback.error { color: var(--danger); }
+
+.cancelled-status {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+  border-radius: 6px;
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+
+@media (max-width: 600px) {
+  .app-container:has(.recovery-toast) .content {
+    padding-top: 154px;
+  }
+
+  .recovery-toast {
+    top: 70px;
+    right: 12px;
+    left: 12px;
+    max-width: none;
+  }
+
+  .room-summary-actions,
+  .share-actions { grid-template-columns: 1fr; }
+
+  .player-card {
+    grid-template-rows: auto auto;
+  }
+}

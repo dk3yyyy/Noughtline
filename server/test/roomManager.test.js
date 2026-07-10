@@ -43,6 +43,63 @@ test('reconnecting replaces the old socket authority', () => {
   assert.ok(manager.makeMove('ROOM_TEST', 0, 1, 'a-new').room);
 });
 
+test('disconnect publishes a server deadline and reconnect restores active state', () => {
+  let now = 1_000;
+  const manager = new RoomManager({ now: () => now });
+  joinTwo(manager);
+
+  const paused = manager.disconnect('b').room;
+  assert.equal(paused.state.status, 'paused');
+  assert.equal(paused.state.disconnectDeadline, 31_000);
+
+  now = 5_000;
+  const resumed = manager.joinRoom('ROOM_TEST', { userId: 2, socketId: 'b-new', username: 'B' }).room;
+  assert.equal(resumed.state.status, 'active');
+  assert.equal(resumed.state.disconnectDeadline, null);
+});
+
+test('room stays paused when only one of two disconnected players reconnects', () => {
+  let now = 0;
+  const manager = new RoomManager({ now: () => now });
+  joinTwo(manager);
+  manager.disconnect('a');
+  now = 5_000;
+  manager.disconnect('b');
+
+  now = 10_000;
+  const resumed = manager.joinRoom('ROOM_TEST', { userId: 1, socketId: 'a-new', username: 'A' }).room;
+  assert.equal(resumed.state.status, 'paused');
+  assert.equal(resumed.state.disconnectDeadline, 35_000);
+});
+
+test('reconnect restores waiting and round-complete states exactly', () => {
+  const waitingManager = new RoomManager();
+  waitingManager.createRoom('ROOM_WAITING', { size: 3, rounds: 3 });
+  waitingManager.joinRoom('ROOM_WAITING', { userId: 1, socketId: 'host', username: 'Host' });
+  waitingManager.disconnect('host');
+  const waiting = waitingManager.joinRoom('ROOM_WAITING', { userId: 1, socketId: 'host-new', username: 'Host' }).room;
+  assert.equal(waiting.state.status, 'waiting');
+
+  const roundManager = new RoomManager();
+  joinTwo(roundManager);
+  assert.equal(playXWin(roundManager).room.state.status, 'round_complete');
+  roundManager.disconnect('b');
+  const roundComplete = roundManager.joinRoom('ROOM_TEST', { userId: 2, socketId: 'b-new', username: 'B' }).room;
+  assert.equal(roundComplete.state.status, 'round_complete');
+});
+
+test('resume room only reconnects an existing authenticated member', () => {
+  const manager = new RoomManager();
+  joinTwo(manager);
+  manager.disconnect('a');
+
+  assert.equal(manager.resumeRoom('ROOM_TEST', { userId: 99, socketId: 'intruder', username: 'Nope' }).error, 'No active room to resume');
+  const resumed = manager.resumeRoom('ROOM_TEST', { userId: 1, socketId: 'a-new', username: 'A' });
+  assert.equal(resumed.player.socketId, 'a-new');
+  assert.equal(manager.makeMove('ROOM_TEST', 0, 1, 'a').error, 'Player is not in this room');
+  assert.ok(manager.makeMove('ROOM_TEST', 0, 1, 'a-new').room);
+});
+
 test('disconnect grace expires to a one-time forfeit settlement', () => {
   let now = 0;
   const settlements = [];
@@ -55,9 +112,44 @@ test('disconnect grace expires to a one-time forfeit settlement', () => {
   const [resolved] = manager.resolveDisconnectTimeouts();
   assert.equal(resolved.room.state.status, 'complete');
   assert.equal(resolved.room.state.seriesWinner, 'X');
+  assert.equal(resolved.room.state.completionReason, 'disconnect_forfeit');
+  assert.equal(resolved.room.state.disconnectDeadline, null);
   assert.equal(settlements.length, 1);
   assert.equal(manager.resolveDisconnectTimeouts().length, 0);
   assert.equal(settlements.length, 1);
+});
+
+test('both disconnected players produce a recoverable cancellation without settlement', () => {
+  let now = 0;
+  const settlements = [];
+  const manager = new RoomManager({ now: () => now, onSeriesComplete: (room) => settlements.push(room) });
+  joinTwo(manager);
+  manager.disconnect('a');
+  manager.disconnect('b');
+
+  now = 30_000;
+  const [resolved] = manager.resolveDisconnectTimeouts();
+  assert.equal(resolved.room.state.status, 'cancelled');
+  assert.equal(resolved.room.state.completionReason, 'match_cancelled');
+  assert.equal(resolved.room.state.disconnectDeadline, null);
+  assert.equal(settlements.length, 0);
+
+  const resumed = manager.resumeRoom('ROOM_TEST', { userId: 1, socketId: 'a-new', username: 'A' });
+  assert.equal(resumed.room.state.status, 'cancelled');
+  assert.equal(manager.makeMove('ROOM_TEST', 0, 1, 'a-new').error, 'Game is not active');
+});
+
+test('disconnectAll updates every room associated with a socket', () => {
+  const manager = new RoomManager();
+  joinTwo(manager, 'ROOM_FIRST');
+  manager.createRoom('ROOM_SECOND', { size: 3, rounds: 3 });
+  manager.joinRoom('ROOM_SECOND', { userId: 1, socketId: 'a', username: 'A' });
+  manager.joinRoom('ROOM_SECOND', { userId: 3, socketId: 'c', username: 'C' });
+
+  const results = manager.disconnectAll('a');
+  assert.equal(results.length, 2);
+  assert.equal(manager.getRoom('ROOM_FIRST').players.find((player) => player.id === 1).connected, false);
+  assert.equal(manager.getRoom('ROOM_SECOND').players.find((player) => player.id === 1).connected, false);
 });
 
 test('plays a best-of-three series and settles exactly once', () => {

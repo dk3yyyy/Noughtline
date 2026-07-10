@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { api, clearSession, ensureSession, getSocket } from './services/client';
+import { clearActiveRoom, createInviteUrl, getInviteRoomId, normalizeRoomId, readActiveRoom, saveActiveRoom } from './services/rooms';
 import {
   Home,
   Trophy,
@@ -17,7 +18,11 @@ import {
   Moon,
   Sun,
   Shield,
-  RotateCcw
+  RotateCcw,
+  Check,
+  Copy,
+  Link2,
+  Share2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import confetti from 'canvas-confetti';
@@ -323,63 +328,175 @@ const HostGameModal = ({ show, onClose, onStart }) => {
   );
 };
 
-const GameCreatedModal = ({ show, onClose, roomId, onStart }) => {
-  const [copied, setCopied] = useState(false);
+const roomErrorMessage = (error) => ({
+  'Room not found': 'That room no longer exists. Ask the host for a fresh invite.',
+  'Room full': 'That room already has two players.',
+  'Invalid room ID': 'Enter a valid room code or Noughtline invite link.',
+  'No active room to resume': 'The previous room is no longer available.',
+}[error] || error || 'The room could not be joined. Try again.');
+
+const JoinRoomModal = ({ show, initialCode = '', connected, onClose, onJoin }) => {
+  const [code, setCode] = useState(initialCode);
+  const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!show) return;
+    setCode(initialCode || '');
+    setError('');
+    setSubmitting(false);
+  }, [show, initialCode]);
 
   if (!show) return null;
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(roomId);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    if (!connected) {
+      setError('Reconnect to Noughtline before joining this room.');
+      return;
+    }
+    const roomId = normalizeRoomId(code);
+    if (!roomId) {
+      setError('Enter a valid room code or Noughtline invite link.');
+      return;
+    }
+
+    setSubmitting(true);
+    setError('');
+    try {
+      const result = await onJoin(roomId);
+      if (result?.error) setError(roomErrorMessage(result.error));
+    } catch {
+      setError('The room could not be joined. Check your connection and try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="modal-backdrop" onClick={submitting ? undefined : onClose}>
+      <motion.form
+        className="modal-content multiplayer-menu"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="join-room-title"
+        aria-describedby="join-room-description"
+        onClick={event => event.stopPropagation()}
+        onKeyDown={event => {
+          if (event.key === 'Escape' && !submitting) onClose();
+        }}
+        onSubmit={handleSubmit}
+        initial={{ scale: 0.96, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+      >
+        <div className="modal-heading-icon"><Link2 size={20} /></div>
+        <h2 id="join-room-title" className="modal-title">Join a room</h2>
+        <p id="join-room-description" className="modal-description">Paste a room code or the full invite link.</p>
+        <label className="config-label" htmlFor="room-code">Room code or invite</label>
+        <input
+          id="room-code"
+          className="room-code-input"
+          value={code}
+          onChange={event => { setCode(event.target.value); setError(''); }}
+          placeholder="ROOM_ABC123"
+          autoComplete="off"
+          autoCapitalize="characters"
+          spellCheck="false"
+          maxLength={256}
+          autoFocus
+          aria-invalid={Boolean(error)}
+          aria-describedby={error ? 'join-room-error' : undefined}
+        />
+        {error && <p id="join-room-error" className="form-error" role="alert">{error}</p>}
+        <div className="btn-stack">
+          <button className="btn-pink" type="submit" disabled={submitting || !connected}>
+            {!connected ? 'Connecting…' : submitting ? 'Joining…' : 'Join room'}
+          </button>
+          <button className="btn-gray" type="button" onClick={onClose} disabled={submitting}>Cancel</button>
+        </div>
+      </motion.form>
+    </div>
+  );
+};
+
+const GameCreatedModal = ({ show, onClose, roomId, onStart }) => {
+  const [shareStatus, setShareStatus] = useState('');
+
+  useEffect(() => {
+    if (show) setShareStatus('');
+  }, [show, roomId]);
+
+  if (!show) return null;
+  const inviteUrl = createInviteUrl(roomId, window.location.origin);
+
+  const handleCopy = async (value = inviteUrl, successState = 'copied') => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setShareStatus(successState);
+    } catch {
+      setShareStatus('error');
+    }
+  };
+
+  const handleShare = async () => {
+    if (!navigator.share) return handleCopy(inviteUrl, 'copied');
+    try {
+      await navigator.share({
+        title: 'Join my Noughtline match',
+        text: `Join my Noughtline room ${roomId}`,
+        url: inviteUrl,
+      });
+      setShareStatus('shared');
+    } catch (error) {
+      if (error.name !== 'AbortError') setShareStatus('error');
+    }
   };
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <motion.div
         className="modal-content multiplayer-menu"
-        onClick={e => e.stopPropagation()}
-        initial={{ scale: 0.9, opacity: 0 }}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="room-ready-title"
+        aria-describedby="room-ready-description"
+        onClick={event => event.stopPropagation()}
+        initial={{ scale: 0.96, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
       >
-        <h2 className="modal-title">Game Created!</h2>
+        <div className="modal-heading-icon"><Link2 size={20} /></div>
+        <h2 id="room-ready-title" className="modal-title">Room ready</h2>
+        <p id="room-ready-description" className="modal-description">Send this invite to your opponent, then enter the board while you wait.</p>
 
-        <p style={{ marginBottom: '1rem', color: '#64748b' }}>
-          Share this code with your friend:
-        </p>
-
-        <div style={{
-          background: '#f1f5f9',
-          padding: '1rem',
-          borderRadius: '12px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: '1rem',
-          marginBottom: '2rem',
-          fontSize: '1.5rem',
-          fontWeight: 'bold',
-          color: '#1e1b4b'
-        }}>
-          <span>{roomId}</span>
-          <button
-            onClick={handleCopy}
-            style={{
-              background: 'none',
-              border: 'none',
-              cursor: 'pointer',
-              padding: '4px',
-              display: 'flex',
-              alignItems: 'center'
-            }}
-          >
-            {copied ? <div style={{ fontSize: '0.8rem', color: 'green' }}>✓</div> : <span style={{ fontSize: '1.2rem' }}>📋</span>}
-          </button>
+        <div className="invite-code-panel">
+          <span className="invite-code-label">Room code</span>
+          <strong>{roomId}</strong>
+          <span className="invite-url">{inviteUrl}</span>
         </div>
 
+        <div className="share-actions">
+          <button type="button" className="btn-gray" onClick={() => handleCopy(inviteUrl, 'copied')}>
+            {shareStatus === 'copied' ? <Check size={17} /> : <Copy size={17} />}
+            {shareStatus === 'copied' ? 'Copied' : 'Copy invite'}
+          </button>
+          <button type="button" className="btn-gray" onClick={() => handleCopy(roomId, 'code-copied')}>
+            {shareStatus === 'code-copied' ? <Check size={17} /> : <Copy size={17} />}
+            {shareStatus === 'code-copied' ? 'Code copied' : 'Copy code'}
+          </button>
+          <button type="button" className="btn-gray" onClick={handleShare}>
+            <Share2 size={17} /> Share
+          </button>
+        </div>
+        <p className={`share-feedback ${shareStatus === 'error' ? 'error' : ''}`} role="status" aria-live="polite">
+          {shareStatus === 'copied' && 'Invite link copied.'}
+          {shareStatus === 'code-copied' && 'Room code copied.'}
+          {shareStatus === 'shared' && 'Invite shared.'}
+          {shareStatus === 'error' && 'Could not share automatically. Copy the room code instead.'}
+        </p>
+
         <div className="btn-stack">
-          <button className="btn-pink" onClick={onStart}>Start Game</button>
-          <button className="btn-gray" onClick={onClose}>Cancel</button>
+          <button className="btn-pink" onClick={onStart}>Enter waiting room</button>
+          <button className="btn-gray" onClick={onClose}>Not now</button>
         </div>
       </motion.div>
     </div>
@@ -428,6 +545,9 @@ const useTicTacToe = (gameConfig, setGameConfig, sounds, user) => {
   const [gameStatus, setGameStatus] = useState('waiting');
   const [round, setRound] = useState(1);
   const [score, setScore] = useState({ X: 0, O: 0 });
+  const [roomPlayers, setRoomPlayers] = useState([]);
+  const [disconnectDeadline, setDisconnectDeadline] = useState(null);
+  const [completionReason, setCompletionReason] = useState(null);
 
   useEffect(() => {
     // Reset Logic
@@ -439,12 +559,13 @@ const useTicTacToe = (gameConfig, setGameConfig, sounds, user) => {
     setGameStatus(mode === 'singleplayer' ? 'active' : 'waiting');
     setRound(1);
     setScore({ X: 0, O: 0 });
+    setRoomPlayers([]);
+    setDisconnectDeadline(null);
+    setCompletionReason(null);
     if (mode === 'singleplayer') setMySymbol('X');
 
     if (mode === 'multiplayer' && roomId) {
-      socket.emit('join_room', { roomId, username: user.username });
-
-      socket.on('room_update', (room) => {
+      const handleRoomUpdate = (room) => {
         setBoard(room.state.board);
         setIsXNext(room.state.isXNext);
         setWinner(room.state.winner);
@@ -452,34 +573,39 @@ const useTicTacToe = (gameConfig, setGameConfig, sounds, user) => {
         setGameStatus(room.state.status);
         setRound(room.state.round);
         setScore(room.state.score);
+        setRoomPlayers(room.players || []);
+        setDisconnectDeadline(room.state.disconnectDeadline || null);
+        setCompletionReason(room.state.completionReason || null);
         setIsActionPending(false);
+        saveActiveRoom(localStorage, room.id);
 
-        // Find my symbol
-        const me = room.players.find(p => p.id === user.id);
+        const me = room.players.find(player => player.id === user.id);
         if (me) setMySymbol(me.symbol);
 
-        const opponent = room.players.find(p => p.id !== user.id);
-        setGameConfig(prev => ({
-          ...prev,
+        const opponent = room.players.find(player => player.id !== user.id);
+        setGameConfig(previous => ({
+          ...previous,
           opponentName: opponent?.username || null,
           opponentAvatar: opponent?.avatar || null,
         }));
 
-        // Sync board size if it differs (e.g. joined a room with different size)
         if (room.config && room.config.size !== boardSize) {
-          setGameConfig(prev => ({ ...prev, size: room.config.size }));
+          setGameConfig(previous => ({ ...previous, size: room.config.size }));
         }
-      });
+      };
 
-      socket.on('game_error', (err) => {
+      const handleGameError = (error) => {
         setIsActionPending(false);
-        alert(err);
-      });
+        alert(error);
+      };
+
+      socket.on('room_update', handleRoomUpdate);
+      socket.on('game_error', handleGameError);
+      socket.emit('join_room', { roomId });
 
       return () => {
-        socket.off('room_update');
-        socket.off('game_error');
-        // socket.emit('leave_room'); // Optional if component unmounts
+        socket.off('room_update', handleRoomUpdate);
+        socket.off('game_error', handleGameError);
       };
     }
   }, [boardSize, mode, roomId, setGameConfig, user.id, user.username]);
@@ -619,6 +745,7 @@ const useTicTacToe = (gameConfig, setGameConfig, sounds, user) => {
     if (winner || board[i] || isActionPending) return;
 
     if (mode === 'multiplayer') {
+      if (gameStatus !== 'active') return;
       setIsActionPending(true);
       socket.emit('make_move', { roomId, index: i });
       sounds.playClick();
@@ -655,7 +782,11 @@ const useTicTacToe = (gameConfig, setGameConfig, sounds, user) => {
   const readyNextRound = () => socket.emit('ready_next_round', { roomId });
   const requestRematch = () => socket.emit('request_rematch', { roomId });
 
-  return { board, handleClick, winner, winningLine, isXNext, resetGame, mySymbol, gameStatus, round, score, readyNextRound, requestRematch };
+  return {
+    board, handleClick, winner, winningLine, isXNext, resetGame, mySymbol,
+    gameStatus, round, score, readyNextRound, requestRematch, roomPlayers,
+    disconnectDeadline, completionReason,
+  };
 };
 
 // --- Main App ---
@@ -669,6 +800,9 @@ export default function App() {
   const [showMultiaplyerMenu, setShowMultiplayerMenu] = useState(false);
   const [showHostModal, setShowHostModal] = useState(false);
   const [showGameCreatedModal, setShowGameCreatedModal] = useState(false);
+  const [joinInitialCode, setJoinInitialCode] = useState(() => getInviteRoomId(window.location.pathname) || '');
+  const [showJoinModal, setShowJoinModal] = useState(() => Boolean(getInviteRoomId(window.location.pathname)));
+  const [recoveryMessage, setRecoveryMessage] = useState('');
   const [isSearching, setIsSearching] = useState(false);
 
   // Persisted state
@@ -737,6 +871,7 @@ export default function App() {
   // Matchmaking Listeners
   useEffect(() => {
     socket.on('match_found', ({ roomId, opponent, opponentAvatar }) => {
+      saveActiveRoom(localStorage, roomId);
       setIsSearching(false);
       setShowMultiplayerMenu(false);
       setGameConfig(prev => ({ ...prev, mode: 'multiplayer', roomId, size: 3, opponentAvatar, opponentName: opponent }));
@@ -768,7 +903,59 @@ export default function App() {
   }, [activeTab]);
 
   const sounds = useSound(userConfig.sound);
-  const { board, handleClick, winner, winningLine, isXNext, resetGame, mySymbol, gameStatus, round, score, readyNextRound, requestRematch } = useTicTacToe(gameConfig, setGameConfig, sounds, user);
+  const {
+    board, handleClick, winner, winningLine, isXNext, resetGame, mySymbol,
+    gameStatus, round, score, readyNextRound, requestRematch, roomPlayers,
+    disconnectDeadline, completionReason,
+  } = useTicTacToe(gameConfig, setGameConfig, sounds, user);
+  const opponentPlayer = roomPlayers.find(player => player.id !== user.id);
+  const opponentDisconnected = gameConfig.mode === 'multiplayer' && opponentPlayer?.connected === false;
+  const [disconnectSeconds, setDisconnectSeconds] = useState(0);
+
+  useEffect(() => {
+    if (!disconnectDeadline) {
+      setDisconnectSeconds(0);
+      return undefined;
+    }
+    const update = () => setDisconnectSeconds(Math.max(0, Math.ceil((disconnectDeadline - Date.now()) / 1000)));
+    update();
+    const timer = window.setInterval(update, 250);
+    return () => window.clearInterval(timer);
+  }, [disconnectDeadline]);
+
+  useEffect(() => {
+    if (isConnected !== true || !user.id || showJoinModal) return;
+    const activeRoom = readActiveRoom(localStorage);
+    if (!activeRoom) return;
+
+    socket.timeout(6_000).emit('resume_room', { roomId: activeRoom.roomId }, (timeoutError, result) => {
+      if (timeoutError) {
+        setRecoveryMessage('Could not restore the previous room yet. Reconnecting…');
+        return;
+      }
+      if (result?.error) {
+        clearActiveRoom(localStorage);
+        setGameConfig(previous => previous.roomId === activeRoom.roomId
+          ? { ...previous, roomId: null, opponentName: null, opponentAvatar: null }
+          : previous);
+        setView('HOME');
+        setRecoveryMessage(roomErrorMessage(result.error));
+        return;
+      }
+
+      const room = result.room;
+      saveActiveRoom(localStorage, room.id);
+      setRecoveryMessage('Match restored.');
+      setGameConfig(previous => ({
+        ...previous,
+        mode: 'multiplayer',
+        roomId: room.id,
+        size: room.config.size,
+        rounds: room.config.rounds,
+      }));
+      setView('GAME');
+    });
+  }, [isConnected, user.id, showJoinModal]);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', userConfig.theme);
@@ -782,8 +969,6 @@ export default function App() {
     else if (activeTab === 'home') setView('HOME');
     else if (activeTab === 'leaderboard') setView('LEADERBOARD');
     else if (activeTab === 'battle') {
-      // Force Battle Arena view, overriding any active game state
-      setGameConfig(prev => ({ ...prev, mode: 'multiplayer', roomId: null }));
       setView('BATTLE');
     }
     else if (activeTab === 'profile') setView('PROFILE');
@@ -817,31 +1002,77 @@ export default function App() {
         alert(result.error);
         return;
       }
-      setGameConfig({ ...gameConfig, mode: 'multiplayer', roomId: result.room.id, size, rounds });
+      saveActiveRoom(localStorage, result.room.id);
+      setGameConfig(previous => ({ ...previous, mode: 'multiplayer', roomId: result.room.id, size, rounds }));
+      setRecoveryMessage('');
       setShowHostModal(false);
       setShowGameCreatedModal(true);
     });
   };
 
   const handleStartGame = () => {
-    // Redundant emit removed: useTicTacToe effect handles this when roomId is set
     setShowGameCreatedModal(false);
     setShowMultiplayerMenu(false);
     setView('GAME');
   };
 
-  const handleJoinRoom = () => {
-    const roomId = prompt("Enter Room ID:")?.trim().toUpperCase();
-    if (!roomId) return;
-    socket.emit('join_room', { roomId }, (result) => {
-      if (result?.error) {
-        alert(result.error);
+  const clearInvitePath = () => {
+    if (getInviteRoomId(window.location.pathname)) window.history.replaceState({}, '', '/');
+  };
+
+  const handleOpenJoinModal = (code = '') => {
+    setJoinInitialCode(code);
+    setShowMultiplayerMenu(false);
+    setShowJoinModal(true);
+  };
+
+  const handleCloseJoinModal = () => {
+    setShowJoinModal(false);
+    setJoinInitialCode('');
+    clearInvitePath();
+  };
+
+  const handleJoinRoom = (roomId) => new Promise((resolve) => {
+    if (!socket.connected) {
+      resolve({ error: 'Still connecting to Noughtline. Try again in a moment.' });
+      return;
+    }
+
+    socket.timeout(8_000).emit('join_room', { roomId }, (timeoutError, result) => {
+      if (timeoutError) {
+        resolve({ error: 'The room did not respond in time. Try again.' });
         return;
       }
-      setGameConfig({ ...gameConfig, mode: 'multiplayer', roomId: result.room.id, size: result.room.config.size, rounds: result.room.config.rounds });
+      if (result?.error) {
+        resolve(result);
+        return;
+      }
+
+      const room = result.room;
+      saveActiveRoom(localStorage, room.id);
+      setGameConfig(previous => ({
+        ...previous,
+        mode: 'multiplayer',
+        roomId: room.id,
+        size: room.config.size,
+        rounds: room.config.rounds,
+      }));
+      setRecoveryMessage('');
+      setShowJoinModal(false);
+      setJoinInitialCode('');
       setShowMultiplayerMenu(false);
+      clearInvitePath();
       setView('GAME');
+      resolve({ room });
     });
+  });
+
+  const handleAcknowledgeTerminalRoom = () => {
+    clearActiveRoom(localStorage);
+    setRecoveryMessage('');
+    setGameConfig(previous => ({ ...previous, roomId: null, opponentName: null, opponentAvatar: null }));
+    setActiveTab('home');
+    setView('HOME');
   };
 
   const handlePlayStranger = () => {
@@ -916,6 +1147,12 @@ export default function App() {
           OFFLINE - Attempting to Reconnect...
         </div>
       )}
+      {recoveryMessage && (
+        <div className="recovery-toast" role="status" aria-live="polite">
+          <span>{recoveryMessage}</span>
+          <button type="button" onClick={() => setRecoveryMessage('')} aria-label="Dismiss message">×</button>
+        </div>
+      )}
       <TopBar stats={stats} setShowSettings={setShowSettings} user={user} onBuyGems={() => setShowBuyGems(true)} />
 
       <SettingsModal
@@ -934,8 +1171,16 @@ export default function App() {
           setShowMultiplayerMenu(false);
           setShowHostModal(true);
         }}
-        onJoin={handleJoinRoom}
+        onJoin={() => handleOpenJoinModal()}
         onPlayStranger={handlePlayStranger}
+      />
+
+      <JoinRoomModal
+        show={showJoinModal}
+        initialCode={joinInitialCode}
+        connected={isConnected === true}
+        onClose={handleCloseJoinModal}
+        onJoin={handleJoinRoom}
       />
 
       <HostGameModal
@@ -1061,8 +1306,12 @@ export default function App() {
 
               {gameConfig.mode === 'multiplayer' && gameConfig.roomId && !showGameCreatedModal && (
                 <div className="room-summary">
+                  <span className="page-eyebrow">Active room</span>
                   <p>Room ID: <strong>{gameConfig.roomId}</strong></p>
-                  <p>Share this code with your friend!</p>
+                  <div className="room-summary-actions">
+                    <button className="btn-pink" onClick={() => setView('GAME')}>Resume match</button>
+                    <button className="btn-gray" onClick={() => setShowGameCreatedModal(true)}>Invite player</button>
+                  </div>
                 </div>
               )}
             </motion.div>
@@ -1195,23 +1444,33 @@ export default function App() {
                     <span className={`symbol char ${mySymbol}`}>{mySymbol}</span>
                   </div>
                   <div className="vs">VS</div>
-                  <div className={`player-card ${isXNext === (mySymbol === 'O') ? 'active' : ''}`}>
+                  <div className={`player-card ${isXNext === (mySymbol === 'O') ? 'active' : ''} ${opponentDisconnected ? 'disconnected' : ''}`}>
                     <img src={(gameConfig.mode === 'multiplayer' && gameConfig.opponentAvatar) ? gameConfig.opponentAvatar : "https://api.dicebear.com/7.x/bottts/svg?seed=AI"} alt="Opponent" />
                     <p>{gameConfig.mode === 'multiplayer' ? (gameConfig.opponentName || 'Waiting…') : 'AI'}</p>
+                    {opponentDisconnected && <small className="player-connection-state">Disconnected</small>}
                     <span className={`symbol char ${mySymbol === 'X' ? 'O' : 'X'}`}>{mySymbol === 'X' ? 'O' : 'X'}</span>
                   </div>
                 </div>
 
-                <div className="turn-indicator" aria-live="polite">
+                <div className={`turn-indicator ${gameStatus === 'paused' ? 'paused' : ''}`} aria-live="polite">
                   {gameConfig.mode === 'multiplayer' && gameStatus === 'waiting' ? (
                     <span>Waiting for opponent…</span>
+                  ) : gameConfig.mode === 'multiplayer' && gameStatus === 'paused' ? (
+                    <span className="disconnect-countdown">
+                      {opponentDisconnected ? 'Opponent disconnected' : 'Connection interrupted'}
+                      {disconnectSeconds > 0 ? ` · ${disconnectSeconds}s to forfeit` : ' · resolving match…'}
+                    </span>
+                  ) : gameConfig.mode === 'multiplayer' && gameStatus === 'cancelled' ? (
+                    <span className="cancelled-status">Match cancelled — neither player reconnected in time.</span>
                   ) : winner ? (
                     <motion.span
                       initial={{ scale: 0.5 }}
-                      animate={{ scale: 1.2 }}
+                      animate={{ scale: 1.08 }}
                       className="winner-text"
                     >
-                      {winner === 'Draw' ? "It's a Draw!" : `${winner === mySymbol ? 'You' : 'Opponent'} Won!`}
+                      {completionReason === 'disconnect_forfeit'
+                        ? (winner === mySymbol ? 'Opponent forfeited — you win!' : 'You forfeited — opponent wins.')
+                        : winner === 'Draw' ? "It's a Draw!" : `${winner === mySymbol ? 'You' : 'Opponent'} Won!`}
                     </motion.span>
                   ) : (
                     <span className="animate-pulse">{isXNext === (mySymbol === 'X') ? "> Your Turn" : "> Opponent Turn"}</span>
@@ -1228,6 +1487,9 @@ export default function App() {
                 {gameStatus === 'complete' && (
                   <button className="btn-primary" onClick={requestRematch}>Request rematch</button>
                 )}
+                {gameStatus === 'cancelled' && (
+                  <button className="btn-primary" onClick={handleAcknowledgeTerminalRoom}>Return home</button>
+                )}
               </div>
 
               <div
@@ -1239,7 +1501,7 @@ export default function App() {
                     key={i}
                     className={`square ${winningLine.includes(i) ? 'winning' : ''}`}
                     onClick={() => handleClick(i)}
-                    disabled={gameConfig.mode === 'multiplayer' && gameStatus === 'waiting'}
+                    disabled={gameConfig.mode === 'multiplayer' && gameStatus !== 'active'}
                     aria-label={`Row ${Math.floor(i / gameConfig.size) + 1}, column ${(i % gameConfig.size) + 1}${square ? `, ${square}` : ', empty'}`}
                   >
                     <AnimatePresence>

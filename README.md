@@ -69,6 +69,7 @@ npm run dev:all
 npm run lint
 npm test
 npm run build
+E2E_BASE_URL=http://127.0.0.1:3000 npm run test:e2e
 npm audit --omit=dev
 npm audit --prefix server --omit=dev
 ```

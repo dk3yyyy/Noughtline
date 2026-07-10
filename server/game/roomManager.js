@@ -2,6 +2,7 @@ const crypto = require('crypto');
 
 const ALLOWED_SIZES = new Set([3, 4, 5]);
 const ALLOWED_ROUNDS = new Set([1, 3, 5]);
+const DISCONNECT_GRACE_MS = 30_000;
 
 class RoomManager {
   constructor({ onSeriesComplete = () => {}, now = () => Date.now() } = {}) {
@@ -33,6 +34,7 @@ class RoomManager {
       nextRoundReady: new Set(),
       rematchReady: new Set(),
       roundHistory: [],
+      resumeStatus: null,
       state: this.freshState(size),
     };
     this.rooms.set(normalizedId, room);
@@ -49,6 +51,8 @@ class RoomManager {
       round: previous.round || 1,
       score: previous.score || { X: 0, O: 0 },
       seriesWinner: null,
+      disconnectDeadline: null,
+      completionReason: null,
     };
   }
 
@@ -74,6 +78,38 @@ class RoomManager {
     };
   }
 
+  syncConnectionState(room, { secondPlayerJoined = false } = {}) {
+    if (room.state.status === 'complete' || room.state.status === 'cancelled') {
+      room.state.disconnectDeadline = null;
+      room.resumeStatus = null;
+      return;
+    }
+
+    if (room.players.length < 2) {
+      room.state.status = 'waiting';
+      room.state.disconnectDeadline = null;
+      room.resumeStatus = null;
+      return;
+    }
+
+    const disconnected = room.players.filter((player) => !player.connected);
+    if (disconnected.length === 0) {
+      const restored = room.resumeStatus || (room.state.status === 'paused' ? 'active' : room.state.status);
+      room.state.status = restored === 'waiting' ? 'active' : restored;
+      room.state.disconnectDeadline = null;
+      room.resumeStatus = null;
+      return;
+    }
+
+    if (room.state.status !== 'paused') {
+      room.resumeStatus = secondPlayerJoined && room.state.status === 'waiting'
+        ? 'active'
+        : room.state.status;
+    }
+    room.state.status = 'paused';
+    room.state.disconnectDeadline = Math.min(...disconnected.map((player) => player.disconnectedAt + DISCONNECT_GRACE_MS));
+  }
+
   joinRoom(roomId, player) {
     const room = this.getRoom(roomId);
     if (!room) return { error: 'Room not found' };
@@ -87,7 +123,7 @@ class RoomManager {
       reconnecting.username = player.username;
       reconnecting.avatar = player.avatar;
       room.updatedAt = this.now();
-      if (room.players.length === 2 && room.state.status === 'paused') room.state.status = 'active';
+      this.syncConnectionState(room);
       return { room: this.publicRoom(room), player: { ...reconnecting } };
     }
     if (room.players.length >= 2) return { error: 'Room full' };
@@ -102,8 +138,15 @@ class RoomManager {
     };
     room.players.push(joined);
     room.updatedAt = this.now();
-    if (room.players.length === 2) room.state.status = 'active';
+    this.syncConnectionState(room, { secondPlayerJoined: room.players.length === 2 });
     return { room: this.publicRoom(room), player: { ...joined } };
+  }
+
+  resumeRoom(roomId, player) {
+    const room = this.getRoom(roomId);
+    if (!room) return { error: 'Room not found' };
+    if (!room.players.some((entry) => entry.id === player.userId)) return { error: 'No active room to resume' };
+    return this.joinRoom(room.id, player);
   }
 
   makeMove(roomId, index, userId, socketId) {
@@ -192,17 +235,22 @@ class RoomManager {
     return { room: this.publicRoom(room), waiting: false };
   }
 
-  disconnect(socketId) {
+  disconnectAll(socketId) {
+    const results = [];
     for (const room of this.rooms.values()) {
       const player = room.players.find((entry) => entry.socketId === socketId);
-      if (!player) continue;
+      if (!player || !player.connected) continue;
       player.connected = false;
       player.disconnectedAt = this.now();
-      room.state.status = room.state.status === 'complete' ? 'complete' : 'paused';
+      this.syncConnectionState(room);
       room.updatedAt = this.now();
-      return { roomId: room.id, room: this.publicRoom(room) };
+      results.push({ roomId: room.id, room: this.publicRoom(room) });
     }
-    return null;
+    return results;
+  }
+
+  disconnect(socketId) {
+    return this.disconnectAll(socketId)[0] || null;
   }
 
   resolveDisconnectTimeouts(graceMs = 30_000) {
@@ -212,8 +260,14 @@ class RoomManager {
       const expired = room.players.filter((player) => !player.connected && this.now() - player.disconnectedAt >= graceMs);
       if (expired.length === 0) continue;
       const connected = room.players.filter((player) => player.connected);
-      if (connected.length !== 1) {
-        this.rooms.delete(room.id);
+      if (connected.length === 0) {
+        if (expired.length !== room.players.length) continue;
+        room.state.status = 'cancelled';
+        room.state.completionReason = 'match_cancelled';
+        room.state.disconnectDeadline = null;
+        room.resumeStatus = null;
+        room.updatedAt = this.now();
+        resolved.push({ roomId: room.id, room: this.publicRoom(room) });
         continue;
       }
 
@@ -221,6 +275,9 @@ class RoomManager {
       room.state.status = 'complete';
       room.state.winner = winner.symbol;
       room.state.seriesWinner = winner.symbol;
+      room.state.completionReason = 'disconnect_forfeit';
+      room.state.disconnectDeadline = null;
+      room.resumeStatus = null;
       room.state.score[winner.symbol] += 1;
       room.roundHistory.push({
         round: room.state.round,

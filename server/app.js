@@ -246,6 +246,14 @@ function createRuntime({ config, database, fetchImpl, startTimers = true } = {})
       return callback?.({ room: result.room });
     });
 
+    socket.on('resume_room', ({ roomId } = {}, callback) => {
+      const result = roomManager.resumeRoom(roomId, socketPlayer());
+      if (result.error) return callback?.({ error: result.error });
+      socket.join(result.room.id);
+      io.to(result.room.id).emit('room_update', result.room);
+      return callback?.({ room: result.room });
+    });
+
     socket.on('make_move', ({ roomId, index } = {}, callback) => runGameAction(() => roomManager.makeMove(roomId, index, socket.user.id, socket.id), callback));
     socket.on('ready_next_round', ({ roomId } = {}, callback) => runGameAction(() => roomManager.readyForNextRound(roomId, socket.user.id, socket.id), callback));
     socket.on('request_rematch', ({ roomId } = {}, callback) => runGameAction(() => roomManager.requestRematch(roomId, socket.user.id, socket.id), callback));
@@ -257,8 +265,9 @@ function createRuntime({ config, database, fetchImpl, startTimers = true } = {})
 
     socket.on('disconnect', () => {
       matchmaker.removeFromQueue(socket.id);
-      const result = roomManager.disconnect(socket.id);
-      if (result) io.to(result.roomId).emit('room_update', result.room);
+      for (const result of roomManager.disconnectAll(socket.id)) {
+        io.to(result.roomId).emit('room_update', result.room);
+      }
     });
   });
 
