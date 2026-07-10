@@ -117,17 +117,17 @@ const TopBar = ({ stats, setShowSettings, user, onBuyGems }) => (
       <span>{stats.xp}</span>
     </div>
     <div className="stat-group">
-      <div className="stat-item glass clickable" onClick={onBuyGems}>
+      <button className="stat-item glass clickable" onClick={onBuyGems} aria-label={`Buy gems. Current balance ${user.gems || 0}`}>
         <Gem size={16} color="#2dd4bf" fill="#2dd4bf" />
         <span>{user.gems || 0}</span>
         <div className="plus-btn">+</div>
-      </div>
+      </button>
       <div className="stat-item glass">
         <Coins size={16} color="#fbbf24" fill="#fbbf24" />
         <span>{stats.coins.toFixed(2)}</span>
       </div>
     </div>
-    <button className="profile-btn-wrapper" onClick={() => setShowSettings(true)}>
+    <button className="profile-btn-wrapper" onClick={() => setShowSettings(true)} aria-label="Open settings">
       <img src={user.avatar || "https://api.dicebear.com/7.x/avataaars/svg?seed=Agnes"} alt="Avatar" className="profile-img" />
       <div className="settings-badge"><Settings size={12} color="white" /></div>
     </button>
@@ -153,8 +153,11 @@ const BottomNav = ({ activeTab, setActiveTab }) => {
             key={tab.id}
             className={`nav-item ${isActive ? 'active' : ''}`}
             onClick={() => setActiveTab(tab.id)}
+            aria-label={tab.label}
+            aria-current={isActive ? 'page' : undefined}
           >
             <Icon size={24} className="nav-icon" />
+            <span className="nav-label">{tab.label}</span>
             {isActive && <motion.div layoutId="bubble" className="bubble" />}
           </button>
         );
@@ -455,6 +458,13 @@ const useTicTacToe = (gameConfig, setGameConfig, sounds, user) => {
         const me = room.players.find(p => p.id === user.id);
         if (me) setMySymbol(me.symbol);
 
+        const opponent = room.players.find(p => p.id !== user.id);
+        setGameConfig(prev => ({
+          ...prev,
+          opponentName: opponent?.username || null,
+          opponentAvatar: opponent?.avatar || null,
+        }));
+
         // Sync board size if it differs (e.g. joined a room with different size)
         if (room.config && room.config.size !== boardSize) {
           setGameConfig(prev => ({ ...prev, size: room.config.size }));
@@ -705,19 +715,22 @@ export default function App() {
     api.get('/api/economy/gem-packages').then(res => setGemPackages(res.data));
   }, []);
 
-  // Connection State
-  const [isConnected, setIsConnected] = useState(socket.connected);
+  // Connection State: null means the authenticated socket is still bootstrapping.
+  const [isConnected, setIsConnected] = useState(socket.connected ? true : null);
 
   useEffect(() => {
     function onConnect() { setIsConnected(true); }
     function onDisconnect() { setIsConnected(false); }
+    function onConnectError() { setIsConnected(false); }
 
     socket.on('connect', onConnect);
     socket.on('disconnect', onDisconnect);
+    socket.on('connect_error', onConnectError);
 
     return () => {
       socket.off('connect', onConnect);
       socket.off('disconnect', onDisconnect);
+      socket.off('connect_error', onConnectError);
     };
   }, []);
 
@@ -897,8 +910,8 @@ export default function App() {
 
   return (
     <div className="app-container">
-      {!isConnected && (
-        <div className="connection-banner" style={{ background: '#ef4444', color: 'white', padding: '8px', textAlign: 'center', fontSize: '0.8rem', fontWeight: 'bold' }}>
+      {isConnected === false && (
+        <div className="connection-banner" role="status" aria-live="polite" style={{ background: '#ef4444', color: 'white', padding: '8px', textAlign: 'center', fontSize: '0.8rem', fontWeight: 'bold' }}>
           OFFLINE - Attempting to Reconnect...
         </div>
       )}
@@ -916,7 +929,10 @@ export default function App() {
       <MultiplayerMenu
         show={showMultiaplyerMenu}
         onClose={() => setShowMultiplayerMenu(false)}
-        onHost={() => setShowHostModal(true)}
+        onHost={() => {
+          setShowMultiplayerMenu(false);
+          setShowHostModal(true);
+        }}
         onJoin={handleJoinRoom}
         onPlayStranger={handlePlayStranger}
       />
@@ -964,25 +980,35 @@ export default function App() {
               exit={{ opacity: 0, scale: 0.9 }}
               className="home-screen"
             >
-              <motion.div
-                animate={{ y: [0, -10, 0] }}
-                transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
-              >
+              <div className="home-hero">
+                <span className="home-eyebrow">Server-authoritative arena</span>
                 <h1>Plaything</h1>
-              </motion.div>
+                <p className="home-subtitle">Classic tic-tac-toe rebuilt for quick duels, private rooms, and competitive rounds.</p>
+              </div>
               <div className="button-group">
                 <button
                   className="btn-primary human"
                   onClick={() => setShowMultiplayerMenu(true)}
                 >
-                  Play with Human
+                  <span className="mode-icon"><Swords size={22} /></span>
+                  <span className="mode-copy"><strong>Challenge a player</strong><small>Host a room, join a friend, or find a live opponent.</small></span>
+                  <span className="mode-arrow">↗</span>
                 </button>
                 <button
                   className="btn-primary ai"
-                  onClick={() => setView('AI_CONFIG')}
+                  onClick={() => {
+                    setGameConfig(prev => ({ ...prev, mode: 'singleplayer', roomId: null, opponentName: null, opponentAvatar: null }));
+                    setView('AI_CONFIG');
+                  }}
                 >
-                  Play with AI
+                  <span className="mode-icon"><Zap size={22} /></span>
+                  <span className="mode-copy"><strong>Train against AI</strong><small>Choose your board and difficulty, then sharpen your game.</small></span>
+                  <span className="mode-arrow">→</span>
                 </button>
+              </div>
+              <div className="home-status">
+                <span className="status-online">Realtime service online</span>
+                <span>3×3 · 4×4 · 5×5 boards</span>
               </div>
             </motion.div>
           )}
@@ -995,12 +1021,14 @@ export default function App() {
               exit={{ opacity: 0, x: -20 }}
               className="leaderboard-screen"
             >
+              <span className="page-eyebrow">Competitive standings</span>
               <h2>Leaderboard</h2>
+              <p className="page-intro">Players ranked by experience earned in eligible matches.</p>
               <div className="leaderboard-list">
                 {leaderboard.length > 0 ? leaderboard.map((u, i) => (
                   <div className="rank-item glass" key={i}>
                     <span className="rank-num">#{i + 1}</span>
-                    <img src={u.avatar} className="rank-avatar" />
+                    <img src={u.avatar} className="rank-avatar" alt={`${u.username} avatar`} />
                     <div className="rank-info">
                       <p className="rank-name">{u.username}</p>
                       <span className="rank-xp">{u.xp} XP</span>
@@ -1019,17 +1047,19 @@ export default function App() {
               exit={{ opacity: 0, x: -20 }}
               className="battle-screen"
             >
-              <Swords size={64} className="mb-4 text-accent-pink" />
+              <div className="battle-icon"><Swords size={28} /></div>
+              <span className="page-eyebrow">Realtime multiplayer</span>
               <h2>Battle Arena</h2>
+              <p className="page-intro">Create a private room for a friend or enter matchmaking for a ranked duel.</p>
 
-              <div className="button-group" style={{ width: '100%', marginTop: '20px' }}>
-                <button className="btn-primary" style={{ background: 'var(--accent-purple)' }} onClick={() => setShowMultiplayerMenu(true)}>
+              <div className="button-group">
+                <button className="btn-primary" onClick={() => setShowMultiplayerMenu(true)}>
                   Create / Join Room
                 </button>
               </div>
 
               {gameConfig.mode === 'multiplayer' && gameConfig.roomId && !showGameCreatedModal && (
-                <div style={{ marginTop: '20px', padding: '10px', background: 'var(--glass-bg)', borderRadius: '12px' }}>
+                <div className="room-summary">
                   <p>Room ID: <strong>{gameConfig.roomId}</strong></p>
                   <p>Share this code with your friend!</p>
                 </div>
@@ -1046,10 +1076,10 @@ export default function App() {
               className="profile-screen"
             >
               {!user.email && (
-                <div className="glass" style={{ padding: '1.5rem', marginBottom: '2rem', border: '1px solid var(--accent-pink)' }}>
-                  <p style={{ marginBottom: '1rem' }}>You are playing as a <b>Guest</b>. Link your account to save progress permanently.</p>
-                  <button className="btn-primary" style={{ background: '#4285F4' }} onClick={handleGoogleLogin}>
-                    <img src="https://www.google.com/favicon.ico" style={{ width: 16, marginRight: 8 }} />
+                <div className="glass guest-notice">
+                  <p>You are playing as a <b>Guest</b>. Account linking will preserve progress across devices when OAuth is enabled.</p>
+                  <button className="btn-primary google-button" onClick={handleGoogleLogin}>
+                    <img src="https://www.google.com/favicon.ico" alt="" />
                     Sign in with Google
                   </button>
                 </div>
@@ -1075,13 +1105,13 @@ export default function App() {
                 </div>
               </div>
 
-              <h3 style={{ marginTop: '2.5rem', textAlign: 'left', marginBottom: '1rem' }}>My Collection</h3>
+              <h3 className="collection-title">My Collection</h3>
               <div className="inventory-grid">
                 {inventory.map(item => (
-                  <div key={item.id} className={`inventory-card glass ${user.active_avatar_id === item.id ? 'active' : ''}`} onClick={() => equipAvatar(item.id)} style={{ cursor: 'pointer' }}>
-                    <img src={item.url} />
+                  <button key={item.id} className={`inventory-card glass ${user.active_avatar_id === item.id ? 'active' : ''}`} onClick={() => equipAvatar(item.id)} aria-label={`Equip ${item.name || item.rarity} avatar`}>
+                    <img src={item.url} alt={item.name || `${item.rarity} avatar`} />
                     <span className="rarity-tag" data-rarity={item.rarity}>{item.rarity}</span>
-                  </div>
+                  </button>
                 ))}
               </div>
             </motion.div>
@@ -1145,7 +1175,7 @@ export default function App() {
             >
               <div className="game-info-panel">
                 <div className="game-header">
-                  <button className="back-btn" onClick={() => setView('HOME')}>
+                  <button className="back-btn" aria-label="Return home" onClick={() => { setActiveTab('home'); setView('HOME'); }}>
                     <ChevronLeft size={28} />
                   </button>
                   <div className="mode-badge glass">MODE: {gameConfig.mode === 'multiplayer' ? `ROOM: ${gameConfig.roomId}` : gameConfig.difficulty.toUpperCase()}</div>
@@ -1166,13 +1196,15 @@ export default function App() {
                   <div className="vs">VS</div>
                   <div className={`player-card ${isXNext === (mySymbol === 'O') ? 'active' : ''}`}>
                     <img src={(gameConfig.mode === 'multiplayer' && gameConfig.opponentAvatar) ? gameConfig.opponentAvatar : "https://api.dicebear.com/7.x/bottts/svg?seed=AI"} alt="Opponent" />
-                    <p>{gameConfig.opponentName || 'AI'}</p>
+                    <p>{gameConfig.mode === 'multiplayer' ? (gameConfig.opponentName || 'Waiting…') : 'AI'}</p>
                     <span className={`symbol char ${mySymbol === 'X' ? 'O' : 'X'}`}>{mySymbol === 'X' ? 'O' : 'X'}</span>
                   </div>
                 </div>
 
-                <div className="turn-indicator">
-                  {winner ? (
+                <div className="turn-indicator" aria-live="polite">
+                  {gameConfig.mode === 'multiplayer' && gameStatus === 'waiting' ? (
+                    <span>Waiting for opponent…</span>
+                  ) : winner ? (
                     <motion.span
                       initial={{ scale: 0.5 }}
                       animate={{ scale: 1.2 }}
@@ -1206,6 +1238,8 @@ export default function App() {
                     key={i}
                     className={`square ${winningLine.includes(i) ? 'winning' : ''}`}
                     onClick={() => handleClick(i)}
+                    disabled={gameConfig.mode === 'multiplayer' && gameStatus === 'waiting'}
+                    aria-label={`Row ${Math.floor(i / gameConfig.size) + 1}, column ${(i % gameConfig.size) + 1}${square ? `, ${square}` : ', empty'}`}
                   >
                     <AnimatePresence>
                       {square && (
@@ -1231,15 +1265,15 @@ export default function App() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -20 }}
               className="shop-screen"
-              style={{ paddingBottom: '100px' }}
             >
-              <div className="shop-header glass" style={{ padding: '2rem', borderRadius: '24px', marginBottom: '3rem' }}>
+              <div className="shop-header glass">
                 <div>
-                  <h2 style={{ margin: 0, fontSize: '2.5rem' }}>Treasury</h2>
-                  <p style={{ opacity: 0.7, margin: 0, fontSize: '1.1rem' }}>Secure Currency Exchange</p>
+                  <span className="page-eyebrow">Collection store</span>
+                  <h2>Treasury</h2>
+                  <p>Unlock avatars using server-verified balances.</p>
                 </div>
-                <div style={{ display: 'flex', gap: '1rem' }}>
-                  <button className="pill-btn active" style={{ background: 'var(--accent-teal)', color: 'black' }} onClick={() => setShowBuyGems(true)}>+ Buy Gems</button>
+                <div>
+                  <button className="pill-btn active" onClick={() => setShowBuyGems(true)}>+ Buy Gems</button>
                 </div>
               </div>
 
@@ -1249,7 +1283,7 @@ export default function App() {
                   const isOwned = inventory.some(i => i.id === item.id);
                   return (
                     <div className="shop-card glass" key={item.id} onClick={() => !isOwned && setSelectedShopItem(item)}>
-                      <img src={item.url} className="shop-item-img" />
+                      <img src={item.url} className="shop-item-img" alt={item.name} />
                       <div className="rarity-tag" data-rarity={item.rarity}>{item.rarity}</div>
                       <h4>{item.name}</h4>
                       <p>{item.currency === 'coins' ? <Coins size={14} color="#fbbf24" /> : <Gem size={14} color="#2dd4bf" />} {item.currency === 'coins' ? item.cost_coins : item.cost_gems}</p>
@@ -1272,7 +1306,7 @@ export default function App() {
         </AnimatePresence>
       </main>
 
-      <BottomNav activeTab={activeTab} setActiveTab={setActiveTab} />
+      {!['GAME', 'AI_CONFIG'].includes(view) && <BottomNav activeTab={activeTab} setActiveTab={setActiveTab} />}
     </div >
   );
 }
