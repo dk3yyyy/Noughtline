@@ -4,6 +4,10 @@
 
 Noughtline combines React, Express, Socket.IO, and SQLite to deliver authenticated guest sessions, server-authoritative multiplayer series, persistent progression, and a two-currency cosmetic economy.
 
+## [🎮 Play Noughtline Live](https://noughtline.onrender.com)
+
+> **Free public preview:** the first load after inactivity can take up to a minute. Accounts, scores, balances, and match history are temporary and may reset when the service sleeps or redeploys.
+
 ## ✨ What you can do
 
 - Single-player Tic-Tac-Toe against local AI on 3×3, 4×4 and 5×5 boards.
