@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { api, clearSession, ensureSession, getSocket } from './services/client';
+import { api, clearSession, ensureSession, getSocket, logoutSession } from './services/client';
 import { clearActiveRoom, createInviteUrl, getInviteRoomId, normalizeRoomId, readActiveRoom, saveActiveRoom } from './services/rooms';
 import {
   Home,
@@ -59,7 +59,7 @@ const useSound = (enabled) => useMemo(() => {
 
 // --- Components ---
 
-const SettingsModal = ({ show, onClose, config, setConfig, onExport, onDelete }) => {
+const SettingsModal = ({ show, onClose, config, setConfig, onExport, onDelete, onLogout }) => {
   if (!show) return null;
 
   return (
@@ -105,7 +105,11 @@ const SettingsModal = ({ show, onClose, config, setConfig, onExport, onDelete })
         <h3>Data & Privacy</h3>
         <div className="btn-stack" style={{ marginTop: '1rem', gap: '0.5rem' }}>
           <button className="btn-teal" onClick={() => onExport && onExport()}>Export My Data</button>
+          <button className="btn-gray" style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8 }} onClick={() => onLogout && onLogout()}>
+            <LogOut size={17} /> Log out (new guest)
+          </button>
           <button className="btn-gray" style={{ background: '#ef4444', color: 'white' }} onClick={() => onDelete && onDelete()}>Delete Account</button>
+          <p className="settings-hint">Logging out abandons this guest account — progress, coins and unlocks cannot be recovered. You continue as a brand-new guest.</p>
         </div>
         <button className="close-btn" onClick={onClose}>Close</button>
       </motion.div>
@@ -1358,6 +1362,30 @@ export default function App() {
     } catch { alert("Delete failed"); }
   };
 
+  const handleLogout = async () => {
+    if (!confirm("Log out? This abandons the current guest account — progress, coins and unlocks cannot be recovered. You will continue as a brand-new guest.")) return;
+
+    try {
+      // Revokes the session server-side, clears the stored token, disconnects the socket.
+      await logoutSession();
+      // Continue seamlessly as a brand-new guest (fresh token + profile).
+      const { user: freshUser } = await ensureSession();
+      setUser(freshUser);
+      await fetchUserData();
+      // Do not auto-resume into the previous guest's room.
+      clearActiveRoom(localStorage);
+      setGameConfig(previous => ({ ...previous, roomId: null, opponentName: null, opponentAvatar: null, roomSnapshot: null }));
+      setRecoveryMessage('');
+      setIsSearching(false);
+      setShowLeaveRoom(false);
+      setActiveRoomConflict(null);
+      setShowMultiplayerMenu(false);
+      setActiveTab('home');
+      setView('HOME');
+      setShowSettings(false);
+    } catch { alert("Log out failed. Please try again."); }
+  };
+
   const equipAvatar = async (avatarId) => {
     try {
       await api.post('/api/me/equip-avatar', { avatarId });
@@ -1389,6 +1417,7 @@ export default function App() {
         setConfig={setUserConfig}
         onExport={handleExportData}
         onDelete={handleDeleteAccount}
+        onLogout={handleLogout}
       />
 
       <MultiplayerMenu

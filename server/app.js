@@ -154,6 +154,12 @@ function createRuntime({ config, database, fetchImpl, startTimers = true } = {})
     res.status(201).json({ token: auth.signUser(user), user: publicUser(user) });
   });
 
+  app.post('/api/auth/logout', auth.requireAuth, (req, res) => {
+    // Bump session_version: every token signed before this point is now rejected by verifyToken.
+    db.prepare('UPDATE users SET session_version = session_version + 1 WHERE id = ?').run(req.user.id);
+    res.json({ success: true });
+  });
+
   app.get('/api/me', auth.requireAuth, (req, res) => res.json(publicUser(req.user)));
   app.get('/api/me/inventory', auth.requireAuth, (req, res) => {
     const items = db.prepare(`
