@@ -20,6 +20,7 @@ Noughtline combines React, Express, Socket.IO, and SQLite to deliver authenticat
 - Persistent Coins and Gems with an immutable currency ledger.
 - Coin- and Gem-priced avatar inventory with server-side ownership and balance checks.
 - Server-defined Paystack packages with server-side initialization, verification, signed webhook handling and idempotent crediting.
+- Server-verified Google account linking with single-use nonces; a fresh guest is switched to the owning account, a progressed guest is refused with a conflict.
 - Authenticated profile export and account deletion.
 - Automated API, economy, room-state and two-client Socket.IO tests.
 
@@ -31,7 +32,7 @@ Production requires a strong `JWT_SECRET`. Startup fails if it is missing. CORS 
 
 Paid Gems fail closed when `PAYSTACK_SECRET_KEY` is absent. A balance is credited only after the server verifies the Paystack reference, NGN amount, currency and success state. The same reference can be credited only once.
 
-Google OAuth is intentionally not mocked. Guest play works now; real Google account linking should be added only with provider credentials and server-side ID-token verification. Until then, guest accounts have no verified email and the paid-Gem UI will report that account linking is required.
+Google account linking is implemented but stays dormant until `GOOGLE_CLIENT_ID` is set — fail-closed, like Paystack. Without it the linking endpoints report Google as not configured and guest accounts keep no verified email. When configured, the server verifies Google ID tokens itself: the RS256 signature against Google's published signing keys, plus `iss`, `aud`, `exp`, the issued nonce and `email_verified`, before linking the account or switching a fresh guest onto it. A Google account that belongs to a different player with saved progress is refused rather than silently merged.
 
 ## 🪙 Currency model
 
@@ -88,9 +89,9 @@ The tests cover unauthenticated route rejection, removal of the fake deposit pat
 
 Before deployment:
 
-1. Set a strong `JWT_SECRET`, exact `CORS_ORIGINS`, production `PUBLIC_APP_URL`, persistent `DATABASE_PATH` and Paystack secret.
+1. Set a strong `JWT_SECRET`, exact `CORS_ORIGINS`, production `PUBLIC_APP_URL`, persistent `DATABASE_PATH`, the Paystack secret and the Google OAuth client ID (`GOOGLE_CLIENT_ID`).
 2. Configure the Paystack webhook to `POST /api/payments/paystack/webhook`.
-3. Add real account linking so buyers have verified email addresses.
+3. Point `GOOGLE_CLIENT_ID` at a Google Cloud OAuth 2.0 client (Web application type, authorized JavaScript origins set to the app origin) so players can link a verified email and buy Gems.
 4. Put the service behind TLS and a trusted reverse proxy.
 5. Back up SQLite or migrate to PostgreSQL; use Redis or another shared state store before running multiple Socket.IO instances.
 6. Run CI and a Paystack test-mode transaction before enabling live payments.

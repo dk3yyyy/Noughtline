@@ -16,6 +16,7 @@ function initDb(db) {
       uuid TEXT UNIQUE,
       google_id TEXT UNIQUE,
       email TEXT UNIQUE,
+      email_verified INTEGER NOT NULL DEFAULT 0,
       username TEXT UNIQUE NOT NULL,
       avatar TEXT,
       xp INTEGER NOT NULL DEFAULT 0 CHECK (xp >= 0),
@@ -105,6 +106,7 @@ function initDb(db) {
   addColumnIfNotExists(db, 'users', 'uuid', 'TEXT');
   addColumnIfNotExists(db, 'users', 'google_id', 'TEXT');
   addColumnIfNotExists(db, 'users', 'email', 'TEXT');
+  addColumnIfNotExists(db, 'users', 'email_verified', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfNotExists(db, 'users', 'tokens', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfNotExists(db, 'users', 'gems', 'INTEGER NOT NULL DEFAULT 100');
   addColumnIfNotExists(db, 'users', 'coins', 'INTEGER NOT NULL DEFAULT 0');
@@ -115,6 +117,7 @@ function initDb(db) {
 
   db.exec(`
     CREATE UNIQUE INDEX IF NOT EXISTS idx_users_uuid ON users(uuid);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_avatars_name ON avatars(name);
   `);
