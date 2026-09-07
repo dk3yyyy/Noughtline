@@ -1114,6 +1114,10 @@ export default function App() {
 
   const [gameConfig, setGameConfig] = useState({ size: 3, difficulty: 'easy', mode: 'singleplayer', roomId: null });
   const [user, setUser] = useState({ username: 'Guest', gems: 0, coins: 0, xp: 0, streak: 0 });
+  // Tracks the authenticated identity for async guards: responses that resolve
+  // after logout must not populate the next guest's profile state.
+  const userIdRef = useRef(null);
+  useEffect(() => { userIdRef.current = user.id || null; }, [user.id]);
   const [leaderboard, setLeaderboard] = useState([]);
   const [shopItems, setShopItems] = useState([]);
   const [inventory, setInventory] = useState([]);
@@ -1143,17 +1147,25 @@ export default function App() {
 
   // Match history + wallet ledger share one fetch so PROFILE shows both lists
   // from a single activation; a retry button can re-run it on failure.
-  const fetchActivity = useCallback(async () => {
+  const fetchActivity = useCallback(async (signal) => {
+    const uid = userIdRef.current;
     setActivityLoading(true);
     setActivityError('');
     try {
-      const [matchesRes, ledgerRes] = await Promise.all([api.get('/api/me/matches'), api.get('/api/me/ledger')]);
+      const [matchesRes, ledgerRes] = await Promise.all([
+        api.get('/api/me/matches', { signal }),
+        api.get('/api/me/ledger', { signal }),
+      ]);
+      // Identity changed (logout -> new guest) while the request was in flight:
+      // do not populate the next guest's profile with the old guest's data.
+      if (userIdRef.current !== uid) return;
       setMatches(matchesRes.data);
       setLedger(ledgerRes.data);
-    } catch {
+    } catch (error) {
+      if (error?.code === 'ERR_CANCELED' || userIdRef.current !== uid) return;
       setActivityError('Could not load activity. Check your connection and try again.');
     } finally {
-      setActivityLoading(false);
+      if (userIdRef.current === uid) setActivityLoading(false);
     }
   }, []);
 
@@ -1235,10 +1247,13 @@ export default function App() {
   }, [activeTab]);
 
   // Refresh match history + ledger every time the PROFILE view is activated so
-  // newly completed series and purchases show up without a manual reload.
+  // newly completed series and purchases show up without a manual reload. An
+  // in-flight request is aborted when the view or identity changes.
   useEffect(() => {
     if (view !== 'PROFILE' || !user.id) return;
-    fetchActivity();
+    const controller = new AbortController();
+    fetchActivity(controller.signal);
+    return () => controller.abort();
   }, [view, user.id, fetchActivity]);
 
   const sounds = useSound(userConfig.sound);
@@ -1626,6 +1641,13 @@ export default function App() {
       setShowLeaveRoom(false);
       setActiveRoomConflict(null);
       setShowMultiplayerMenu(false);
+      // Drop the previous guest's profile activity so a stale response (or a
+      // delayed one that slips past the abort) cannot surface in the next guest.
+      setActivityTab('matches');
+      setMatches([]);
+      setLedger([]);
+      setActivityLoading(false);
+      setActivityError('');
       // Continue seamlessly as a brand-new guest (fresh token + profile).
       const { user: freshUser } = await ensureSession();
       setUser(freshUser);
