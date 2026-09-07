@@ -430,7 +430,7 @@
 .rank-item {
   min-height: 68px;
   display: grid;
-  grid-template-columns: 44px 42px 1fr;
+  grid-template-columns: 44px 42px 1fr auto;
   align-items: center;
   gap: 14px;
   padding: 11px 16px;
@@ -464,6 +464,7 @@
 }
 
 .rank-info {
+  min-width: 0;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -471,14 +472,45 @@
 }
 
 .rank-name {
+  min-width: 0;
+  overflow: hidden;
   font-size: 0.9rem;
   font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .rank-xp {
+  flex: 0 0 auto;
   color: var(--text-muted);
   font-family: var(--font-mono);
   font-size: 0.68rem;
+  white-space: nowrap;
+}
+
+/* Ranked Elo rating shown per leaderboard row (server orders by rating). */
+.rank-rating {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 3px;
+}
+
+.rank-rating-value {
+  color: var(--accent-teal);
+  font-family: var(--font-mono);
+  font-size: 1.05rem;
+  font-weight: 500;
+  line-height: 1.1;
+}
+
+.rank-rating-label {
+  color: var(--text-muted);
+  font-size: 0.58rem;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  line-height: 1;
+  text-transform: uppercase;
 }
 
 /* Profile */
@@ -560,6 +592,11 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+}
+
+/* PROFILE gains a third Rating stat box when the API supplies a rating. */
+.stats-grid--three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .stat-box {
@@ -1427,6 +1464,29 @@
   text-shadow: none;
 }
 
+/* Match-complete rating change chip (ranked series only). */
+.rating-delta-chip {
+  display: inline-flex;
+  align-items: center;
+  margin-top: 7px;
+  padding: 3px 11px;
+  border: 1px solid color-mix(in srgb, var(--accent-teal) 40%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-teal) 10%, transparent);
+  color: var(--accent-teal);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 500;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+.rating-delta-chip.loss {
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: var(--danger);
+}
+
 .grid-container {
   width: min(100%, 470px);
   aspect-ratio: 1;
@@ -1891,6 +1951,22 @@
 
   .gem-grid { grid-template-columns: 1fr 1fr; }
   .inventory-grid { grid-template-columns: repeat(3, 1fr); }
+
+  /* Rating layout on small screens: stat boxes 2-up with Rating spanning the
+     full row; leaderboard rows tighten so the rating column still fits. */
+  .stats-grid--three {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .stats-grid--three .stat-box:last-child {
+    grid-column: 1 / -1;
+  }
+  .rank-item {
+    gap: 10px;
+    padding: 10px 12px;
+  }
+  .rank-rating-value {
+    font-size: 0.95rem;
+  }
 }
 
 @media (max-width: 380px) {

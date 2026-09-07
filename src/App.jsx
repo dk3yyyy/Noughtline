@@ -5,6 +5,7 @@ import { mergeToast } from './services/toasts';
 import { dateText, friendlyLedgerReason, outcomeFor, scoreText, signedAmount } from './services/history';
 import { canClaimQuest, DAILY_REWARD, dailyRewardCopy, questComplete, questProgressLabel, rewardLabel } from './services/quests';
 import { parsePaymentComplete, providerReturnState } from './services/payments';
+import { deltaLabel, formatRating, isRankedRoom, ratingDelta } from './services/ratings';
 import { GOOGLE_CLIENT_ID } from './config';
 import { buildGoogleIdConfig, loadGsiScript, normalizeGoogleError, parseProviderResponse, signInAvailability } from './services/google';
 import {
@@ -33,6 +34,7 @@ import {
   AlertTriangle,
   Wallet,
   Gift,
+  Gauge,
   LogOut
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -1360,6 +1362,19 @@ export default function App() {
   // after logout must not populate the next guest's profile state.
   const userIdRef = useRef(null);
   useEffect(() => { userIdRef.current = user.id || null; }, [user.id]);
+  // Mirrors the latest /api/me rating so the []-dep socket listeners can read
+  // it without going stale (readers must never use a closure over `user`).
+  const userRatingRef = useRef(null);
+  useEffect(() => {
+    userRatingRef.current = (typeof user.rating === 'number' && Number.isFinite(user.rating)) ? user.rating : null;
+  }, [user.rating]);
+  // Rating the current ranked series started from; ref (not state) so the
+  // completion effect can re-baseline after each settled series without
+  // re-render loops. Null unless a reward-eligible match is in progress.
+  const rankedBaselineRef = useRef(null);
+  // Match-complete rating delta for the GAME completion chip ({ delta,
+  // label, gained } | null). Null/empty label renders no chip.
+  const [ratingChange, setRatingChange] = useState(null);
   const [leaderboard, setLeaderboard] = useState([]);
   const [shopItems, setShopItems] = useState([]);
   const [inventory, setInventory] = useState([]);
@@ -1549,6 +1564,10 @@ export default function App() {
         opponentName: opponent,
         roomSnapshot: room || null,
       }));
+      // Matchmaking rooms are always reward-eligible: baseline the rating this
+      // series started from so the completion chip can show its real delta.
+      if (isRankedRoom(room)) rankedBaselineRef.current = userRatingRef.current;
+      setRatingChange(null);
       setView('GAME');
     });
 
@@ -1592,6 +1611,14 @@ export default function App() {
     disconnectDeadline, completionReason, actionError,
   } = useTicTacToe(gameConfig, setGameConfig, sounds, user);
   const resultWinner = gameStatus === 'complete' ? (seriesWinner || winner) : winner;
+  // Rating delta chip shows only when a ranked (matchmaking) series completed
+  // normally AND the settlement actually moved the rating.
+  const ratingChip = gameConfig.mode === 'multiplayer'
+    && gameStatus === 'complete'
+    && isRankedRoom(gameConfig.roomSnapshot)
+    && !['disconnect_forfeit', 'voluntary_forfeit'].includes(completionReason)
+    && ratingChange !== null && ratingChange.label !== ''
+    ? ratingChange : null;
   const opponentPlayer = roomPlayers.find(player => player.id !== user.id);
   const opponentDisconnected = gameConfig.mode === 'multiplayer' && opponentPlayer?.connected === false;
   const [disconnectSeconds, setDisconnectSeconds] = useState(0);
@@ -1606,6 +1633,10 @@ export default function App() {
       rounds: room.config.rounds,
       roomSnapshot: room,
     }));
+    // A resumed reward-eligible room is still ranked: (re)baseline from the
+    // current rating. Private/unranked rooms just clear any previous chip.
+    if (isRankedRoom(room)) rankedBaselineRef.current = userRatingRef.current;
+    setRatingChange(null);
     setRecoveryMessage(message);
     setActiveRoomConflict(null);
     setShowJoinModal(false);
@@ -1619,6 +1650,9 @@ export default function App() {
     setShowLeaveRoom(false);
     setActiveRoomConflict(null);
     setGameConfig(previous => ({ ...previous, roomId: null, opponentName: null, opponentAvatar: null, roomSnapshot: null }));
+    // Leaving the game must never leave a stale delta behind.
+    rankedBaselineRef.current = null;
+    setRatingChange(null);
     setActiveTab('home');
     setView('HOME');
   }, []);
@@ -1728,6 +1762,38 @@ export default function App() {
   useEffect(() => {
     if (gameConfig.mode === 'multiplayer' && gameStatus === 'complete') fetchUserData();
   }, [gameStatus, gameConfig.mode, fetchUserData]);
+
+  // Ranked Elo chip: when a reward-eligible (matchmaking) series completes
+  // normally the server settles a rating change, so read the fresh rating and
+  // show the delta next to the outcome. The baseline ref is advanced to the
+  // settled rating so a rematch series measures from this result, not from the
+  // original room entry. Forfeits never adjust ratings, so they are skipped.
+  useEffect(() => {
+    if (gameConfig.mode !== 'multiplayer' || gameStatus !== 'complete') return undefined;
+    if (!isRankedRoom(gameConfig.roomSnapshot)) return undefined;
+    if (['disconnect_forfeit', 'voluntary_forfeit'].includes(completionReason)) return undefined;
+    if (rankedBaselineRef.current === null) return undefined;
+    const uid = userIdRef.current;
+    if (!uid) return undefined;
+
+    let alive = true;
+    api.get('/api/me')
+      .then((res) => {
+        if (!alive || userIdRef.current !== uid) return;
+        const next = res.data && res.data.rating;
+        if (typeof next !== 'number' || !Number.isFinite(next)) return;
+        const baseline = rankedBaselineRef.current;
+        setRatingChange({
+          delta: ratingDelta(baseline, next),
+          label: deltaLabel(baseline, next),
+          gained: next > baseline,
+        });
+        rankedBaselineRef.current = next;
+        userRatingRef.current = next;
+      })
+      .catch(() => { if (alive) setRatingChange(null); });
+    return () => { alive = false; };
+  }, [gameStatus, gameConfig.mode, gameConfig.roomSnapshot, completionReason]);
 
   // Modal Handlers
   const handleHostGame = (rounds, size) => {
@@ -2356,7 +2422,7 @@ export default function App() {
             >
               <span className="page-eyebrow">Competitive standings</span>
               <h2>Leaderboard</h2>
-              <p className="page-intro">Players ranked by experience earned in eligible matches.</p>
+              <p className="page-intro">Players ranked by competitive rating earned in eligible matches.</p>
               <div className="leaderboard-list">
                 {leaderboard.length > 0 ? leaderboard.map((u, i) => (
                   <div className="rank-item glass" key={i}>
@@ -2366,6 +2432,12 @@ export default function App() {
                       <p className="rank-name">{u.username}</p>
                       <span className="rank-xp">{u.xp} XP</span>
                     </div>
+                    {Number.isFinite(u.rating) ? (
+                      <div className="rank-rating">
+                        <strong className="rank-rating-value">{formatRating(u.rating)}</strong>
+                        <span className="rank-rating-label">Rating</span>
+                      </div>
+                    ) : null}
                   </div>
                 )) : <p>Loading...</p>}
               </div>
@@ -2434,7 +2506,7 @@ export default function App() {
                 <p className="text-accent-teal" style={{ opacity: 0.7 }}>Level {user.level || 1}</p>
               </div>
 
-              <div className="stats-grid">
+              <div className={`stats-grid${Number.isFinite(user.rating) ? ' stats-grid--three' : ''}`}>
                 <div className="stat-box glass">
                   <Trophy size={20} color="#fbbf24" />
                   <span className="stat-val">{user.wins || 0}</span>
@@ -2445,6 +2517,13 @@ export default function App() {
                   <span className="stat-val">{stats.streak}</span>
                   <span className="stat-label">Streak</span>
                 </div>
+                {Number.isFinite(user.rating) && (
+                  <div className="stat-box glass">
+                    <Gauge size={20} color="#49d6b4" />
+                    <span className="stat-val">{formatRating(user.rating)}</span>
+                    <span className="stat-label">Rating</span>
+                  </div>
+                )}
               </div>
 
               <div className="activity-card glass">
@@ -2630,6 +2709,15 @@ export default function App() {
                     </motion.span>
                   ) : (
                     <span className="animate-pulse">{isXNext === (mySymbol === 'X') ? "> Your Turn" : "> Opponent Turn"}</span>
+                  )}
+                  {ratingChip && (
+                    <span
+                      className={`rating-delta-chip ${ratingChip.gained ? 'gain' : 'loss'}`}
+                      role="status"
+                      aria-label={`Rating ${ratingChip.gained ? 'increased by' : 'decreased by'} ${Math.abs(ratingChip.delta)}`}
+                    >
+                      Rating {ratingChip.label}
+                    </span>
                   )}
                 </div>
                 {actionError && <p className="game-action-error" role="alert">{actionError}</p>}
