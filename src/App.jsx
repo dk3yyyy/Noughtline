@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { api, clearSession, ensureSession, getSocket, logoutSession } from './services/client';
 import { clearActiveRoom, createInviteUrl, getInviteRoomId, normalizeRoomId, readActiveRoom, saveActiveRoom } from './services/rooms';
+import { mergeToast } from './services/toasts';
 import {
   Home,
   Trophy,
@@ -56,6 +57,39 @@ const useSound = (enabled) => useMemo(() => {
 
   return { playClick, playWin, playLose };
 }, [enabled]);
+
+// --- Toast Hook ---
+const TOAST_DURATION_MS = 3200;
+
+const useToasts = () => {
+  const [toasts, setToasts] = useState([]);
+  const toastIdRef = useRef(0);
+  const timersRef = useRef(new Map());
+
+  const dismissToast = useCallback((id) => {
+    const timer = timersRef.current.get(id);
+    if (timer !== undefined) {
+      window.clearTimeout(timer);
+      timersRef.current.delete(id);
+    }
+    setToasts(current => current.filter(toast => toast.id !== id));
+  }, []);
+
+  const notify = useCallback((message, tone = 'info', duration = TOAST_DURATION_MS) => {
+    toastIdRef.current += 1;
+    const id = `toast-${toastIdRef.current}`;
+    const timer = window.setTimeout(() => dismissToast(id), duration);
+    timersRef.current.set(id, timer);
+    setToasts(current => mergeToast(current, { id, message, tone }).toasts);
+  }, [dismissToast]);
+
+  useEffect(() => () => {
+    timersRef.current.forEach(timer => window.clearTimeout(timer));
+    timersRef.current.clear();
+  }, []);
+
+  return { toasts, notify, dismissToast };
+};
 
 // --- Components ---
 
@@ -556,6 +590,40 @@ const handleDialogKeyDown = (event, pending, onClose) => {
   }
 };
 
+const FallbackModal = ({ show, onPlayAI, onBackToMenu }) => {
+  if (!show) return null;
+
+  return (
+    <div className="modal-backdrop" onClick={onBackToMenu}>
+      <motion.div
+        className="modal-content multiplayer-menu"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="fallback-ai-title"
+        aria-describedby="fallback-ai-description"
+        onClick={event => event.stopPropagation()}
+        onKeyDown={event => handleDialogKeyDown(event, false, onBackToMenu)}
+        initial={{ scale: 0.96, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+      >
+        <div className="modal-heading-icon"><Zap size={21} /></div>
+        <h2 id="fallback-ai-title" className="modal-title">No opponent found</h2>
+        <p id="fallback-ai-description" className="modal-description">
+          No stranger matched in the queue. Play a medium 3×3 AI game instead?
+        </p>
+        <div className="btn-stack">
+          <button type="button" className="btn-pink" onClick={onPlayAI}>
+            <Zap size={17} /> Play vs AI
+          </button>
+          <button type="button" className="btn-gray" onClick={onBackToMenu} autoFocus>
+            Back to menu
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+};
+
 const LeaveRoomModal = ({ show, gameStatus, hasOpponent, pending, onCancel, onConfirm }) => {
   if (!show) return null;
   const abandonsInvite = gameStatus === 'waiting' && !hasOpponent;
@@ -587,6 +655,48 @@ const LeaveRoomModal = ({ show, gameStatus, hasOpponent, pending, onCancel, onCo
           </button>
           <button type="button" className="btn-gray" onClick={onCancel} disabled={pending} autoFocus>
             {abandonsInvite ? 'Stay in room' : 'Stay in match'}
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+};
+
+const ConfirmDialog = ({
+  show,
+  title,
+  description,
+  confirmLabel,
+  pendingLabel = 'Working…',
+  busy = false,
+  onCancel,
+  onConfirm,
+}) => {
+  if (!show) return null;
+
+  return (
+    <div className="modal-backdrop" onClick={busy ? undefined : onCancel}>
+      <motion.div
+        className="modal-content multiplayer-menu leave-room-dialog"
+        role="alertdialog"
+        aria-modal="true"
+        aria-busy={busy}
+        aria-labelledby="confirm-dialog-title"
+        aria-describedby="confirm-dialog-description"
+        onClick={event => event.stopPropagation()}
+        onKeyDown={event => handleDialogKeyDown(event, busy, onCancel)}
+        initial={{ scale: 0.96, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+      >
+        <div className="modal-heading-icon danger"><AlertTriangle size={21} /></div>
+        <h2 id="confirm-dialog-title" className="modal-title">{title}</h2>
+        <p id="confirm-dialog-description" className="modal-description">{description}</p>
+        <div className="btn-stack">
+          <button type="button" className="btn-danger" onClick={onConfirm} disabled={busy}>
+            {busy ? pendingLabel : confirmLabel}
+          </button>
+          <button type="button" className="btn-gray" onClick={onCancel} disabled={busy} autoFocus>
+            Cancel
           </button>
         </div>
       </motion.div>
@@ -905,11 +1015,19 @@ export default function App() {
   const [showJoinModal, setShowJoinModal] = useState(() => Boolean(getInviteRoomId(window.location.pathname)));
   const [recoveryMessage, setRecoveryMessage] = useState('');
   const [isSearching, setIsSearching] = useState(false);
+  const [showFallbackModal, setShowFallbackModal] = useState(false);
   const [showLeaveRoom, setShowLeaveRoom] = useState(false);
   const [leavePending, setLeavePending] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deletePending, setDeletePending] = useState(false);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [logoutPending, setLogoutPending] = useState(false);
   const [activeRoomConflict, setActiveRoomConflict] = useState(null);
   const [activeRoomPending, setActiveRoomPending] = useState(false);
   const skipRecoveryOnce = useRef(false);
+
+  // In-app toast notifications (replaces native browser popups for non-destructive notices)
+  const { toasts, notify, dismissToast } = useToasts();
 
   // Persisted state
   const [userConfig, setUserConfig] = useState(() => {
@@ -994,12 +1112,11 @@ export default function App() {
     });
 
     socket.on('match_fallback_ai', () => {
+      // No stranger matched within the queue window: stop searching and let the
+      // player choose whether to play the AI instead of dropping them in.
       setIsSearching(false);
       setShowMultiplayerMenu(false);
-      // Fallback to AI if no stranger found
-      setGameConfig(prev => ({ ...prev, mode: 'singleplayer', difficulty: 'medium', size: 3 }));
-      setView('GAME');
-      alert("No stranger found. Matching with AI Bot!");
+      setShowFallbackModal(true);
     });
 
     return () => {
@@ -1316,8 +1433,26 @@ export default function App() {
     socket.emit('cancel_matchmaking');
   };
 
-  const handleGoogleLogin = async () => {
-    alert('Google account linking is disabled until real OAuth credentials and server-side token verification are configured.');
+  // Player accepted the "no opponent found" fallback: start a local medium 3x3
+  // AI game (previously this happened automatically, without asking).
+  const handlePlayVsAIFallback = () => {
+    setShowFallbackModal(false);
+    setGameConfig(prev => ({
+      ...prev,
+      mode: 'singleplayer',
+      difficulty: 'medium',
+      size: 3,
+      roomId: null,
+      opponentName: null,
+      opponentAvatar: null,
+      roomSnapshot: null,
+    }));
+    resetGame();
+    setView('GAME');
+  };
+
+  const handleGoogleLogin = () => {
+    notify('Google account linking is disabled until real OAuth credentials and server-side token verification are configured.', 'info', 6000);
   };
 
   const buyGemPackage = async (packageId) => {
@@ -1325,7 +1460,7 @@ export default function App() {
       const { data } = await api.post('/api/economy/payments', { packageId });
       window.location.assign(data.authorizationUrl);
     } catch (error) {
-      alert(error.response?.data?.error || 'Payment could not be started');
+      notify(error.response?.data?.error || 'Payment could not be started', 'error');
     }
   };
 
@@ -1334,8 +1469,8 @@ export default function App() {
       await api.post('/api/shop/purchase', { avatarId });
       await fetchUserData();
       setSelectedShopItem(null);
-      alert("Avatar Added to Collection!");
-    } catch (error) { alert(error.response?.data?.error || "Purchase failed"); }
+      notify('Avatar added to collection!', 'success');
+    } catch (error) { notify(error.response?.data?.error || 'Purchase failed', 'error'); }
   };
 
   const handleExportData = async () => {
@@ -1348,22 +1483,29 @@ export default function App() {
       document.body.appendChild(downloadAnchorNode);
       downloadAnchorNode.click();
       downloadAnchorNode.remove();
-    } catch { alert("Export failed"); }
+      notify('Data export downloaded.', 'success');
+    } catch { notify('Export failed', 'error'); }
   };
 
   const handleDeleteAccount = async () => {
-    if (!confirm("Are you sure? This is permanent and cannot be undone.")) return;
-
+    if (deletePending) return;
+    setDeletePending(true);
     try {
       await api.delete('/api/me');
-      alert("Account Deleted. Goodbye!");
+      setShowDeleteConfirm(false);
+      notify('Account deleted. Goodbye!', 'success');
       clearSession();
-      window.location.reload();
-    } catch { alert("Delete failed"); }
+      // Give the toast a moment to be read before bootstrapping a fresh guest session.
+      window.setTimeout(() => window.location.reload(), 1600);
+    } catch {
+      setDeletePending(false);
+      notify('Delete failed', 'error');
+    }
   };
 
   const handleLogout = async () => {
-    if (!confirm("Log out? This abandons the current guest account — progress, coins and unlocks cannot be recovered. You will continue as a brand-new guest.")) return;
+    if (logoutPending) return;
+    setLogoutPending(true);
 
     try {
       // Revokes the session server-side, clears the stored token, disconnects the socket.
@@ -1381,10 +1523,15 @@ export default function App() {
       const { user: freshUser } = await ensureSession();
       setUser(freshUser);
       await fetchUserData();
+      setShowLogoutConfirm(false);
+      setLogoutPending(false);
       setActiveTab('home');
       setView('HOME');
       setShowSettings(false);
-    } catch { alert("Log out failed. Please try again."); }
+    } catch {
+      setLogoutPending(false);
+      notify('Log out failed. Please try again.', 'error');
+    }
   };
 
   const equipAvatar = async (avatarId) => {
@@ -1392,7 +1539,7 @@ export default function App() {
       await api.post('/api/me/equip-avatar', { avatarId });
       await fetchUserData();
       sounds.playClick();
-    } catch { alert("Failed to equip"); }
+    } catch (error) { notify(error.response?.data?.error || 'Failed to equip', 'error'); }
   };
 
 
@@ -1409,6 +1556,25 @@ export default function App() {
           <button type="button" onClick={() => setRecoveryMessage('')} aria-label="Dismiss message">×</button>
         </div>
       )}
+      {toasts.length > 0 && (
+        <div className="toast-stack" role="status" aria-live="polite">
+          <AnimatePresence>
+            {toasts.map(toast => (
+              <motion.div
+                key={toast.id}
+                className={`toast toast-${toast.tone}`}
+                initial={{ opacity: 0, y: -10, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: -6, scale: 0.98 }}
+                layout
+              >
+                <span>{toast.message}</span>
+                <button type="button" onClick={() => dismissToast(toast.id)} aria-label="Dismiss notification">×</button>
+              </motion.div>
+            ))}
+          </AnimatePresence>
+        </div>
+      )}
       <TopBar stats={stats} setShowSettings={setShowSettings} user={user} onBuyGems={() => setShowBuyGems(true)} />
 
       <SettingsModal
@@ -1417,8 +1583,8 @@ export default function App() {
         config={userConfig}
         setConfig={setUserConfig}
         onExport={handleExportData}
-        onDelete={handleDeleteAccount}
-        onLogout={handleLogout}
+        onDelete={() => setShowDeleteConfirm(true)}
+        onLogout={() => setShowLogoutConfirm(true)}
       />
 
       <MultiplayerMenu
@@ -1458,6 +1624,12 @@ export default function App() {
         onCancel={handleCancelSearch}
       />
 
+      <FallbackModal
+        show={showFallbackModal}
+        onPlayAI={handlePlayVsAIFallback}
+        onBackToMenu={() => setShowFallbackModal(false)}
+      />
+
       <LeaveRoomModal
         show={showLeaveRoom}
         gameStatus={gameStatus}
@@ -1473,6 +1645,28 @@ export default function App() {
         onResume={handleResumeActiveRoom}
         onCopy={handleCopyActiveInvite}
         onClose={handleCloseActiveRoom}
+      />
+
+      <ConfirmDialog
+        show={showDeleteConfirm}
+        title="Delete account?"
+        description="This permanently deletes your account, collection, coins and progress. It cannot be undone."
+        confirmLabel="Delete account"
+        pendingLabel="Deleting…"
+        busy={deletePending}
+        onCancel={() => setShowDeleteConfirm(false)}
+        onConfirm={handleDeleteAccount}
+      />
+
+      <ConfirmDialog
+        show={showLogoutConfirm}
+        title="Log out?"
+        description="This abandons the current guest account — progress, coins and unlocks cannot be recovered. You will continue as a brand-new guest."
+        confirmLabel="Log out"
+        pendingLabel="Logging out…"
+        busy={logoutPending}
+        onCancel={() => setShowLogoutConfirm(false)}
+        onConfirm={handleLogout}
       />
 
       <BuyGemsModal
