@@ -146,3 +146,38 @@ test('POST /api/auth/logout with an already-revoked token returns 401', async (t
   const second = await request(runtime.app).post('/api/auth/logout').set(auth).send({});
   assert.equal(second.status, 401);
 });
+
+test('GET /api/me/matches enriches each row with the opponent username and avatar', async (t) => {
+  const runtime = createTestRuntime();
+  t.after(() => runtime.db.close());
+  const xPlayer = await guest(runtime);
+  const oPlayer = await guest(runtime);
+  runtime.roomManager.createRoom('ROOM_MATCHES_ENRICH', { size: 4, rounds: 3 }, { rewardEligible: true });
+  runtime.roomManager.joinRoom('ROOM_MATCHES_ENRICH', { userId: xPlayer.user.id, socketId: 'a', username: xPlayer.user.username });
+  runtime.roomManager.joinRoom('ROOM_MATCHES_ENRICH', { userId: oPlayer.user.id, socketId: 'b', username: oPlayer.user.username });
+  runtime.roomManager.disconnect('b');
+  runtime.roomManager.resolveDisconnectTimeouts(0);
+
+  const fromX = await request(runtime.app).get('/api/me/matches').set('Authorization', `Bearer ${xPlayer.token}`);
+  assert.equal(fromX.status, 200);
+  assert.equal(fromX.body.length, 1);
+  const rowX = fromX.body[0];
+  // Additive enrichment: the opponent is the player NOT on the requester side.
+  assert.equal(rowX.opponent_username, oPlayer.user.username);
+  assert.equal(rowX.opponent_avatar, oPlayer.user.avatar);
+  // Original columns stay intact.
+  assert.equal(rowX.player_x_id, xPlayer.user.id);
+  assert.equal(rowX.player_o_id, oPlayer.user.id);
+  assert.equal(rowX.winner_id, xPlayer.user.id);
+  assert.equal(rowX.result, 'X');
+  assert.equal(rowX.board_size, 4);
+  assert.ok(Number.isInteger(rowX.score_x) && rowX.score_x >= 1);
+  assert.ok(Number.isInteger(rowX.rounds_played) && rowX.rounds_played >= 1);
+  assert.ok(typeof rowX.round_history === 'string');
+
+  // From the other side the enriched opponent flips to the X player.
+  const fromO = await request(runtime.app).get('/api/me/matches').set('Authorization', `Bearer ${oPlayer.token}`);
+  assert.equal(fromO.body.length, 1);
+  assert.equal(fromO.body[0].opponent_username, xPlayer.user.username);
+  assert.equal(fromO.body[0].opponent_avatar, xPlayer.user.avatar);
+});
