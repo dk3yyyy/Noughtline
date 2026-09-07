@@ -283,6 +283,53 @@ test('linking a claimed account refuses a guest with saved progress', async (t) 
   assert.equal((await request(runtime.app).get('/api/me').set('Authorization', `Bearer ${owner.token}`)).status, 200);
 });
 
+test('linking a claimed account refuses a guest with ledger history even at zero XP', async (t) => {
+  const { runtime } = createTestRuntime({
+    tokenVerifier: async () => googlePayload({ sub: 'google-sub-owner', email: 'owner@example.com' }),
+  });
+  t.after(() => runtime.db.close());
+
+  const owner = await guest(runtime);
+  const ownerNonce = await issueNonce(runtime, owner.token);
+  const ownerLink = await link(runtime, owner.token, { idToken: 'owner-token', nonce: ownerNonce.nonce });
+  assert.equal(ownerLink.status, 200);
+
+  // A guest that never played a series but has a ledger entry (e.g. a future
+  // zero-XP reward path) must count as having saved progress.
+  const progressed = await guest(runtime);
+  runtime.db.prepare(
+    "INSERT INTO currency_ledger (id, user_id, currency, amount, balance_after, reason, reference) VALUES ('ledger-fresh-check', ?, 'coins', 1, 1, 'test_credit', 'test:ledger-fresh-check')"
+  ).run(progressed.user.id);
+  const nonce = await issueNonce(runtime, progressed.token);
+  const response = await link(runtime, progressed.token, { idToken: 'owner-token', nonce: nonce.nonce });
+  assert.equal(response.status, 409);
+  assert.deepEqual(response.body, { error: CONFLICT_MESSAGE, code: 'GOOGLE_LINK_CONFLICT' });
+});
+
+test('linking a claimed account refuses a guest with a paid avatar even at zero XP', async (t) => {
+  const { runtime } = createTestRuntime({
+    tokenVerifier: async () => googlePayload({ sub: 'google-sub-owner', email: 'owner@example.com' }),
+  });
+  t.after(() => runtime.db.close());
+
+  const owner = await guest(runtime);
+  const ownerNonce = await issueNonce(runtime, owner.token);
+  const ownerLink = await link(runtime, owner.token, { idToken: 'owner-token', nonce: ownerNonce.nonce });
+  assert.equal(ownerLink.status, 200);
+
+  // Starter avatars are granted to every guest and must NOT count as progress;
+  // a paid (non-free) avatar must. Insert directly to isolate the avatar check
+  // from the ledger check.
+  const progressed = await guest(runtime);
+  const paidAvatar = runtime.db.prepare('SELECT id FROM avatars WHERE cost_gems > 0 OR cost_coins > 0 ORDER BY id LIMIT 1').get();
+  assert.ok(paidAvatar, 'seeded catalogue has a paid avatar');
+  runtime.db.prepare('INSERT INTO user_avatars (user_id, avatar_id) VALUES (?, ?)').run(progressed.user.id, paidAvatar.id);
+  const nonce = await issueNonce(runtime, progressed.token);
+  const response = await link(runtime, progressed.token, { idToken: 'owner-token', nonce: nonce.nonce });
+  assert.equal(response.status, 409);
+  assert.deepEqual(response.body, { error: CONFLICT_MESSAGE, code: 'GOOGLE_LINK_CONFLICT' });
+});
+
 test('claiming an email already used by another player returns 409 EMAIL_ALREADY_LINKED', async (t) => {
   const { runtime } = createTestRuntime({
     tokenVerifier: async ({ idToken }) => (idToken === 'first'

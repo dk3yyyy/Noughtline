@@ -185,3 +185,26 @@ test('pruneNonces drops only expired nonces', () => {
   assert.equal(auth.pruneNonces(), 1);
   assert.equal(auth.size, 0);
 });
+
+test('verifyIdToken fails closed when the JWKS fetch hangs past the timeout', async () => {
+  // A fetch that never settles would otherwise pin the shared in-flight JWKS
+  // request (and every concurrent verification) forever. Drive the rejection
+  // with a real timer (AbortSignal.timeout is unref'd, so in a test's empty
+  // event loop it never fires; a live server always has active handles).
+  const hangingFetch = async (_url, options) => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('fetch timed out')), 30);
+    options?.signal?.addEventListener('abort', () => {
+      clearTimeout(timer);
+      reject(options.signal.reason);
+    }, { once: true });
+  });
+  const auth = createGoogleAuth({
+    config: { googleClientId: CLIENT_ID },
+    fetchImpl: hangingFetch,
+    jwksFetchTimeoutMs: 30,
+  });
+  await assert.rejects(
+    () => auth.verifyIdToken({ idToken: signToken(), nonce: 'nonce-abc' }),
+    (error) => error.code === 'GOOGLE_VERIFY_FAILED',
+  );
+});

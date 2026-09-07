@@ -120,9 +120,18 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
   });
 
   app.disable('x-powered-by');
+  const cspDirectives = { imgSrc: ["'self'", 'data:', 'https:'] };
+  if (config.googleClientId) {
+    // Google Identity Services loads its client script and renders its sign-in
+    // button/iframe from accounts.google.com; the default script-src 'self'
+    // would otherwise block the entire flow in production.
+    cspDirectives.scriptSrc = ["'self'", 'https://accounts.google.com'];
+    cspDirectives.frameSrc = ["'self'", 'https://accounts.google.com'];
+    cspDirectives.connectSrc = ["'self'", 'https://accounts.google.com'];
+  }
   app.use(helmet({
     crossOriginResourcePolicy: false,
-    contentSecurityPolicy: { directives: { imgSrc: ["'self'", 'data:', 'https:'] } },
+    contentSecurityPolicy: { directives: cspDirectives },
   }));
   app.use(cors({ origin: config.corsOrigins }));
 
@@ -205,7 +214,17 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
           }
           const played = db.prepare('SELECT 1 FROM series_results WHERE player_x_id = ? OR player_o_id = ? LIMIT 1')
             .get(req.user.id, req.user.id);
-          const isFresh = !played && (req.user.xp || 0) === 0;
+          // A guest is only switchable when there is nothing to preserve. Series
+          // results, XP, ledger history, or paid (non-starter) avatars all count
+          // as progress. Starter avatars granted at guest creation do NOT count.
+          const hasLedger = db.prepare('SELECT 1 FROM currency_ledger WHERE user_id = ? LIMIT 1').get(req.user.id);
+          const hasPaidAvatar = db.prepare(`
+            SELECT 1 FROM user_avatars ua
+            JOIN avatars a ON a.id = ua.avatar_id
+            WHERE ua.user_id = ? AND NOT (a.cost_gems = 0 AND a.cost_coins = 0)
+            LIMIT 1
+          `).get(req.user.id);
+          const isFresh = !played && (req.user.xp || 0) === 0 && !hasLedger && !hasPaidAvatar;
           if (!isFresh) {
             throw Object.assign(new Error('This Google account is linked to another player with saved progress. Export your data from the current guest first.'), { code: 'GOOGLE_LINK_CONFLICT', status: 409 });
           }

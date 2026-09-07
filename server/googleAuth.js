@@ -5,6 +5,7 @@ const GOOGLE_CERTS_URL = 'https://www.googleapis.com/oauth2/v3/certs';
 const GOOGLE_ISSUERS = Object.freeze(['accounts.google.com', 'https://accounts.google.com']);
 const GOOGLE_NONCE_TTL_MS = 10 * 60 * 1000;
 const JWKS_CACHE_MS = 60 * 60 * 1000;
+const JWKS_FETCH_TIMEOUT_MS = 5000;
 
 function verifyFailed() {
   return Object.assign(new Error('Google sign-in could not be verified'), { code: 'GOOGLE_VERIFY_FAILED' });
@@ -14,8 +15,15 @@ function verifyFailed() {
 // ID-token verifier that validates RS256 signatures against Google's published
 // JWKS (https://www.googleapis.com/oauth2/v3/certs). `tokenVerifier` can be
 // injected in tests to avoid network access; `fetchImpl` and `now` follow the
-// same injection conventions as economy.js.
-function createGoogleAuth({ config, fetchImpl = global.fetch, now = () => Date.now(), tokenVerifier } = {}) {
+// same injection conventions as economy.js. `jwksFetchTimeoutMs` bounds how
+// long a hung Google certs fetch can pin the shared in-flight request.
+function createGoogleAuth({
+  config,
+  fetchImpl = global.fetch,
+  now = () => Date.now(),
+  tokenVerifier,
+  jwksFetchTimeoutMs = JWKS_FETCH_TIMEOUT_MS,
+} = {}) {
   const nonces = new Map();
   let jwksCache = null;
   let jwksInflight = null;
@@ -55,7 +63,14 @@ function createGoogleAuth({ config, fetchImpl = global.fetch, now = () => Date.n
     if (!force && jwksCache && jwksCache.expiresAt > now()) return jwksCache.keysByKid;
     if (jwksInflight) return jwksInflight;
     jwksInflight = (async () => {
-      const response = await fetchImpl(GOOGLE_CERTS_URL);
+      let response;
+      try {
+        // Bounding the fetch keeps a hung Google certs endpoint from pinning the
+        // shared in-flight request (and thus every concurrent verification).
+        response = await fetchImpl(GOOGLE_CERTS_URL, { signal: AbortSignal.timeout(jwksFetchTimeoutMs) });
+      } catch {
+        throw verifyFailed();
+      }
       if (!response || !response.ok) throw verifyFailed();
       const body = await response.json();
       const keysByKid = new Map();
