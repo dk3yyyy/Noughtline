@@ -1146,6 +1146,15 @@ export default function App() {
   const googleSignInBusyRef = useRef(false);   // synchronous in-flight guard (state lags)
   const googlePromptTimerRef = useRef(null);   // non-stuck safety net for the GIS prompt
 
+  // Unmount safety: a pending prompt safety timer must never fire after the
+  // component is gone (setState on an unmounted component is a no-op warning).
+  useEffect(() => () => {
+    if (googlePromptTimerRef.current !== null) {
+      window.clearTimeout(googlePromptTimerRef.current);
+      googlePromptTimerRef.current = null;
+    }
+  }, []);
+
   // Modal States
   const [showBuyGems, setShowBuyGems] = useState(false);
   const [selectedShopItem, setSelectedShopItem] = useState(null);
@@ -1606,13 +1615,19 @@ export default function App() {
   // deployed the button degrades to the informational toast below.
   const googleEnabled = isGoogleEnabled(googleProviderConfigured, GOOGLE_CLIENT_ID);
 
-  const resetGoogleSignInBusy = () => {
-    if (!googleSignInBusyRef.current) return;
-    googleSignInBusyRef.current = false;
+  const clearGooglePromptTimer = () => {
     if (googlePromptTimerRef.current !== null) {
       window.clearTimeout(googlePromptTimerRef.current);
       googlePromptTimerRef.current = null;
     }
+  };
+
+  const resetGoogleSignInBusy = () => {
+    // Always disarm the safety timer, even if busy is already false: an armed
+    // timer must never outlive the flow that created it.
+    clearGooglePromptTimer();
+    if (!googleSignInBusyRef.current) return;
+    googleSignInBusyRef.current = false;
     setGoogleSignInPending(false);
   };
 
@@ -1701,12 +1716,23 @@ export default function App() {
               resetGoogleSignInBusy();
               return;
             }
+            // A credential means the flow is moving to the server exchange:
+            // disarm the safety timer so it cannot fire during the request.
+            clearGooglePromptTimer();
             linkGoogleCredential(credential, nonce);
           },
         });
         if (!config) throw new Error('Google sign-in is not configured correctly.');
 
         gsiId.initialize(config);
+        // Safety net armed BEFORE prompt(): if GIS neither returns a
+        // credential nor reports a moment (e.g. a chooser closed in an
+        // unreported way), never leave the button stuck in the busy state.
+        googlePromptTimerRef.current = window.setTimeout(() => {
+          const currentGsi = window.google && window.google.accounts && window.google.accounts.id;
+          if (currentGsi && typeof currentGsi.cancel === 'function') currentGsi.cancel();
+          resetGoogleSignInBusy();
+        }, GOOGLE_PROMPT_TIMEOUT_MS);
         // If the prompt is skipped or dismissed (or suppressed, in the legacy
         // iframe flow) no credential callback ever fires, so release the busy
         // state on those moments. A pure "display" moment (legacy flow, chooser
@@ -1719,15 +1745,6 @@ export default function App() {
           if (resolvedWithoutCredential) resetGoogleSignInBusy();
         };
         gsiId.prompt(onPromptMoment);
-
-        // Safety net: if GIS neither returns a credential nor reports a
-        // moment (e.g. a chooser closed in an unreported way), never leave
-        // the button stuck in the busy state.
-        googlePromptTimerRef.current = window.setTimeout(() => {
-          const currentGsi = window.google && window.google.accounts && window.google.accounts.id;
-          if (currentGsi && typeof currentGsi.cancel === 'function') currentGsi.cancel();
-          resetGoogleSignInBusy();
-        }, GOOGLE_PROMPT_TIMEOUT_MS);
       } catch (error) {
         const { message, canceled } = normalizeGoogleError(error);
         if (!canceled && message) notify(message, 'error');
