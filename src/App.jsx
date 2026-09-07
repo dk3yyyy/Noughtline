@@ -1368,11 +1368,8 @@ export default function App() {
     try {
       // Revokes the session server-side, clears the stored token, disconnects the socket.
       await logoutSession();
-      // Continue seamlessly as a brand-new guest (fresh token + profile).
-      const { user: freshUser } = await ensureSession();
-      setUser(freshUser);
-      await fetchUserData();
-      // Do not auto-resume into the previous guest's room.
+      // Clear the previous guest's active-room descriptor BEFORE the fresh socket
+      // connects, so it cannot auto-resume into the abandoned guest's room.
       clearActiveRoom(localStorage);
       setGameConfig(previous => ({ ...previous, roomId: null, opponentName: null, opponentAvatar: null, roomSnapshot: null }));
       setRecoveryMessage('');
@@ -1380,6 +1377,10 @@ export default function App() {
       setShowLeaveRoom(false);
       setActiveRoomConflict(null);
       setShowMultiplayerMenu(false);
+      // Continue seamlessly as a brand-new guest (fresh token + profile).
+      const { user: freshUser } = await ensureSession();
+      setUser(freshUser);
+      await fetchUserData();
       setActiveTab('home');
       setView('HOME');
       setShowSettings(false);

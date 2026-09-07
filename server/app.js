@@ -157,6 +157,12 @@ function createRuntime({ config, database, fetchImpl, startTimers = true } = {})
   app.post('/api/auth/logout', auth.requireAuth, (req, res) => {
     // Bump session_version: every token signed before this point is now rejected by verifyToken.
     db.prepare('UPDATE users SET session_version = session_version + 1 WHERE id = ?').run(req.user.id);
+    // Socket authority is only checked at connect time, so revocation must also
+    // drop every live socket for this user. The disconnect handler then removes
+    // the user from matchmaking and pauses/forfeits any open room as usual.
+    for (const socket of io.sockets.sockets.values()) {
+      if (socket.user?.id === req.user.id) socket.disconnect(true);
+    }
     res.json({ success: true });
   });
 
