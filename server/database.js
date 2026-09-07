@@ -28,6 +28,7 @@ function initDb(db) {
       losses INTEGER NOT NULL DEFAULT 0 CHECK (losses >= 0),
       draws INTEGER NOT NULL DEFAULT 0 CHECK (draws >= 0),
       streak INTEGER NOT NULL DEFAULT 0 CHECK (streak >= 0),
+      rating INTEGER NOT NULL DEFAULT 1000,
       active_avatar_id INTEGER,
       session_version INTEGER NOT NULL DEFAULT 0,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -122,6 +123,7 @@ function initDb(db) {
   addColumnIfNotExists(db, 'users', 'coins', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfNotExists(db, 'users', 'active_avatar_id', 'INTEGER');
   addColumnIfNotExists(db, 'users', 'session_version', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfNotExists(db, 'users', 'rating', 'INTEGER NOT NULL DEFAULT 1000');
   addColumnIfNotExists(db, 'users', 'last_daily_reward_date', 'TEXT');
   addColumnIfNotExists(db, 'avatars', 'cost_coins', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfNotExists(db, 'avatars', 'currency', "TEXT NOT NULL DEFAULT 'gems'");

@@ -8,6 +8,7 @@ const helmet = require('helmet');
 const { rateLimit } = require('express-rate-limit');
 const { Server } = require('socket.io');
 const { createDatabase, createGuest, publicUser } = require('./database');
+const { computeNewRatings } = require('./elo');
 const { createAuth } = require('./auth');
 const { createEconomy, GEM_PACKAGES } = require('./economy');
 const { createQuestService } = require('./quests');
@@ -116,6 +117,24 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
           outcome: didWin ? 'won' : isDraw ? 'draw' : 'lost',
           day: questDay,
         });
+      }
+    }
+
+    // Ranked Elo: only reward-eligible series played to completion (no
+    // forfeits) adjust ratings, and only when both seats are occupied. Read
+    // both players' pre-match ratings before writing either so the deltas are
+    // computed against the same baseline; the enclosing transaction keeps this
+    // atomic with the results row and reward writes above.
+    if (completionReason === 'played' && room.players.length === 2 && playerX && playerO) {
+      const ratingX = db.prepare('SELECT rating FROM users WHERE id = ?').get(playerX.id);
+      const ratingO = db.prepare('SELECT rating FROM users WHERE id = ?').get(playerO.id);
+      if (ratingX && ratingO && Number.isFinite(ratingX.rating) && Number.isFinite(ratingO.rating)) {
+        const outcome = room.state.seriesWinner === 'Draw'
+          ? 'DRAW'
+          : room.state.seriesWinner === playerX.symbol ? 'A_WINS' : 'B_WINS';
+        const { newA, newB } = computeNewRatings(ratingX.rating, ratingO.rating, outcome);
+        db.prepare('UPDATE users SET rating = ? WHERE id = ?').run(newA, playerX.id);
+        db.prepare('UPDATE users SET rating = ? WHERE id = ?').run(newB, playerO.id);
       }
     }
   })();
@@ -377,7 +396,7 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
   });
 
   app.get('/api/leaderboard', (_req, res) => {
-    res.json(db.prepare("SELECT username, avatar, xp, level, wins FROM users WHERE username != 'AI_Bot' ORDER BY xp DESC, wins DESC LIMIT 50").all());
+    res.json(db.prepare("SELECT username, avatar, xp, level, wins, rating FROM users WHERE username != 'AI_Bot' ORDER BY rating DESC, xp DESC, wins DESC LIMIT 50").all());
   });
 
   const spaIndex = config.staticDir && path.join(config.staticDir, 'index.html');
