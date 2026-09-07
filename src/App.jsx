@@ -4,7 +4,7 @@ import { clearActiveRoom, createInviteUrl, getInviteRoomId, normalizeRoomId, rea
 import { mergeToast } from './services/toasts';
 import { dateText, friendlyLedgerReason, outcomeFor, scoreText, signedAmount } from './services/history';
 import { GOOGLE_CLIENT_ID } from './config';
-import { buildGoogleIdConfig, isGoogleEnabled, loadGsiScript, normalizeGoogleError, parseProviderResponse } from './services/google';
+import { buildGoogleIdConfig, loadGsiScript, normalizeGoogleError, parseProviderResponse, signInAvailability } from './services/google';
 import {
   Home,
   Trophy,
@@ -1142,6 +1142,7 @@ export default function App() {
   // configured (checked once on mount, defensively) and the button only runs
   // a real GIS sign-in when that is true AND a client id is compiled in.
   const [googleProviderConfigured, setGoogleProviderConfigured] = useState(false);
+  const [googleProvidersLoaded, setGoogleProvidersLoaded] = useState(false);
   const [googleSignInPending, setGoogleSignInPending] = useState(false);
   const googleSignInBusyRef = useRef(false);   // synchronous in-flight guard (state lags)
   const googlePromptTimerRef = useRef(null);   // non-stuck safety net for the GIS prompt
@@ -1212,12 +1213,18 @@ export default function App() {
   // Google provider availability (public, defensive). A missing endpoint, an
   // unreachable server or an unconfigured response all mean "not configured":
   // the sign-in button then keeps its informational behavior instead of
-  // attempting a GIS flow that would fail server-side.
+  // attempting a GIS flow that would fail server-side. Until this resolves the
+  // state is "unknown" and clicks trigger a live re-check (never a false
+  // "not configured" toast).
   useEffect(() => {
     let alive = true;
     api.get('/api/auth/providers')
-      .then(res => { if (alive) setGoogleProviderConfigured(parseProviderResponse(res.data)); })
-      .catch(() => { /* stays false */ });
+      .then(res => {
+        if (!alive) return;
+        setGoogleProviderConfigured(parseProviderResponse(res.data));
+        setGoogleProvidersLoaded(true);
+      })
+      .catch(() => { if (alive) setGoogleProvidersLoaded(true); });
     return () => { alive = false; };
   }, []);
 
@@ -1610,10 +1617,15 @@ export default function App() {
   };
 
   // --- Google account linking ---
-  // googleEnabled is true only when the server reports the provider configured
-  // AND this build carries a VITE_GOOGLE_CLIENT_ID. With no credentials
-  // deployed the button degrades to the informational toast below.
-  const googleEnabled = isGoogleEnabled(googleProviderConfigured, GOOGLE_CLIENT_ID);
+  // Availability is tri-state: 'unknown' until /api/auth/providers resolves,
+  // then 'enabled' (server configured AND this build carries a
+  // VITE_GOOGLE_CLIENT_ID) or 'unconfigured'. With no credentials deployed the
+  // button degrades to the informational toast below.
+  const googleAvailability = signInAvailability({
+    configured: googleProviderConfigured,
+    loaded: googleProvidersLoaded,
+    clientId: GOOGLE_CLIENT_ID,
+  });
 
   const clearGooglePromptTimer = () => {
     if (googlePromptTimerRef.current !== null) {
@@ -1668,12 +1680,26 @@ export default function App() {
     }
   };
 
-  const handleGoogleLogin = () => {
+  const handleGoogleLogin = async () => {
     // Synchronous guard: never double-submit, even on rapid clicks before
     // React has re-rendered the disabled state.
     if (googleSignInBusyRef.current) return;
 
-    if (!googleEnabled) {
+    if (googleAvailability === 'unknown') {
+      // Cold start / slow first load: the providers endpoint has not resolved
+      // yet, so "not configured" would be a lie. Re-check it live.
+      let configured = false;
+      try {
+        const { data } = await api.get('/api/auth/providers');
+        configured = parseProviderResponse(data);
+      } catch { /* treated as unconfigured below */ }
+      setGoogleProviderConfigured(configured);
+      setGoogleProvidersLoaded(true);
+      if (signInAvailability({ configured, loaded: true, clientId: GOOGLE_CLIENT_ID }) !== 'enabled') {
+        notify('Google sign-in will be enabled once credentials are configured.', 'info', 6000);
+        return;
+      }
+    } else if (googleAvailability === 'unconfigured') {
       notify('Google sign-in will be enabled once credentials are configured.', 'info', 6000);
       return;
     }
@@ -1684,9 +1710,8 @@ export default function App() {
     // The GIS flow is callback-driven, so the busy state is released by the
     // credential callback, a prompt moment, or the safety timeout — not when
     // this async continuation returns after calling prompt().
-    (async () => {
-      let nonce = null;
-      try {
+    let nonce = null;
+    try {
         // The nonce is single-use server-side and session-bound: request a
         // fresh one per attempt and never reuse it after a failure/cancel.
         try {
@@ -1750,7 +1775,6 @@ export default function App() {
         if (!canceled && message) notify(message, 'error');
         resetGoogleSignInBusy();
       }
-    })();
   };
 
   const buyGemPackage = async (packageId) => {

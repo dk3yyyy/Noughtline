@@ -29,10 +29,23 @@ const TRANSPORT_FAILURE_MESSAGE = 'Could not reach the server. Check your connec
  * @returns {boolean}
  */
 export function parseProviderResponse(data) {
-  if (!data || typeof data !== 'object' || !data.google || typeof data.google !== 'object') {
-    return false;
-  }
+  if (!data || typeof data !== 'object' || !data.google || typeof data.google !== 'object') return false;
   return data.google.configured === true;
+}
+
+/**
+ * Classify what the Sign in with Google button should do based on the latest
+ * provider knowledge. The initial state is "unknown" (the providers endpoint
+ * has not resolved yet): clicking during that window must NOT claim the server
+ * is unconfigured — the handler re-checks instead.
+ *
+ * @param {{configured?: boolean, loaded?: boolean, clientId?: unknown}} state
+ * @returns {'enabled'|'unknown'|'unconfigured'}
+ */
+export function signInAvailability({ configured = false, loaded = false, clientId } = {}) {
+  if (configured === true && typeof clientId === 'string' && clientId.trim() !== '') return 'enabled';
+  if (loaded !== true) return 'unknown';
+  return 'unconfigured';
 }
 
 /**
