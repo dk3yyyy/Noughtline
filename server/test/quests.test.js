@@ -306,3 +306,41 @@ test('quest progress is scoped to its UTC day and does not leak into the next da
   assert.equal(staleClaim.status, 409);
   assert.equal(staleClaim.body.code, 'QUEST_INCOMPLETE');
 });
+
+test('series settlement records quest progress under the injected quest clock', async (t) => {
+  const { createQuestService } = require('../quests');
+  // A fixed day that is (almost certainly) not the host clock's UTC day: if
+  // settlement used the host clock this test would write progress elsewhere.
+  const clockMs = Date.parse('2026-09-08T12:00:00Z');
+  const db = createDatabase(':memory:');
+  const economy = createEconomy({ db, config: { paystackSecretKey: '', publicAppUrl: 'http://localhost' } });
+  const questService = createQuestService({ db, economy, now: () => clockMs });
+  const runtime = createRuntime({ config: config(), database: db, startTimers: false, questService });
+  t.after(() => runtime.db.close());
+
+  const x = await guest(runtime);
+  const o = await guest(runtime);
+  runtime.roomManager.createRoom('ROOM_QUEST_CLOCK', { size: 3, rounds: 1 }, { rewardEligible: true });
+  runtime.roomManager.joinRoom('ROOM_QUEST_CLOCK', { userId: x.user.id, socketId: 'a', username: x.user.username });
+  runtime.roomManager.joinRoom('ROOM_QUEST_CLOCK', { userId: o.user.id, socketId: 'b', username: o.user.username });
+  // X completes the top row -> series settles as 'played' with X the winner.
+  runtime.roomManager.makeMove('ROOM_QUEST_CLOCK', 0, x.user.id, 'a');
+  runtime.roomManager.makeMove('ROOM_QUEST_CLOCK', 3, o.user.id, 'b');
+  runtime.roomManager.makeMove('ROOM_QUEST_CLOCK', 1, x.user.id, 'a');
+  runtime.roomManager.makeMove('ROOM_QUEST_CLOCK', 4, o.user.id, 'b');
+  runtime.roomManager.makeMove('ROOM_QUEST_CLOCK', 2, x.user.id, 'a');
+
+  // Both players progressed 'play' quests on the injected clock's day only.
+  const progressByQuest = (userId) => Object.fromEntries(
+    runtime.db.prepare('SELECT quest_id, progress FROM quest_progress WHERE user_id = ? AND day = ?')
+      .all(userId, '2026-09-08').map((row) => [row.quest_id, row.progress]),
+  );
+  assert.deepEqual(progressByQuest(x.user.id), { play_3: 1, play_5: 1, win_1: 1, win_3: 1 });
+  assert.deepEqual(progressByQuest(o.user.id), { play_3: 1, play_5: 1 });
+  for (const player of [x, o]) {
+    assert.equal(
+      runtime.db.prepare('SELECT COUNT(*) AS count FROM quest_progress WHERE user_id = ? AND day != ?').get(player.user.id, '2026-09-08').count,
+      0,
+    );
+  }
+});

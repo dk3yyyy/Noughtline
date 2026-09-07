@@ -133,7 +133,15 @@ function createQuestService({ db, economy, now = () => Date.now() }) {
     })();
   }
 
-  return { utcDayString, recordSettledSeries, getDailyState, getQuestsForUser, claimDailyReward, claimQuest };
+  return {
+    utcDayString,
+    currentDay: today,
+    recordSettledSeries,
+    getDailyState,
+    getQuestsForUser,
+    claimDailyReward,
+    claimQuest,
+  };
 }
 
 module.exports = { DAILY_REWARD, QUEST_CATALOG, questById, utcDayString, createQuestService };

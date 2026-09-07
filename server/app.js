@@ -79,6 +79,10 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
 
     if (!room.rewardEligible) return;
 
+    // Quest progress uses the quest service's injected clock (same source as
+    // the claim endpoints) and is recorded for both players under one day.
+    const questDay = completionReason === 'played' ? questService.currentDay() : null;
+
     for (const player of room.players) {
       const isDraw = room.state.seriesWinner === 'Draw';
       const didWin = winner?.id === player.id;
@@ -106,11 +110,11 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
       // Quest progress is recorded inside the same settlement transaction, but
       // only for series played to completion: forfeits are not 'played' and
       // the rewardEligible guard above already excludes private rooms.
-      if (completionReason === 'played') {
+      if (questDay) {
         questService.recordSettledSeries({
           userId: player.id,
           outcome: didWin ? 'won' : isDraw ? 'draw' : 'lost',
-          day: questService.utcDayString(new Date()),
+          day: questDay,
         });
       }
     }
