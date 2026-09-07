@@ -98,6 +98,16 @@ function initDb(db) {
       FOREIGN KEY(winner_id) REFERENCES users(id) ON DELETE SET NULL
     );
 
+    CREATE TABLE IF NOT EXISTS quest_progress (
+      user_id INTEGER NOT NULL,
+      quest_id TEXT NOT NULL,
+      day TEXT NOT NULL,
+      progress INTEGER NOT NULL DEFAULT 0 CHECK (progress >= 0),
+      claimed INTEGER NOT NULL DEFAULT 0 CHECK (claimed IN (0, 1)),
+      PRIMARY KEY (user_id, quest_id, day),
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
     CREATE INDEX IF NOT EXISTS idx_ledger_user_created ON currency_ledger(user_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_series_players ON series_results(player_x_id, player_o_id, completed_at DESC);
   `);
@@ -112,6 +122,7 @@ function initDb(db) {
   addColumnIfNotExists(db, 'users', 'coins', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfNotExists(db, 'users', 'active_avatar_id', 'INTEGER');
   addColumnIfNotExists(db, 'users', 'session_version', 'INTEGER NOT NULL DEFAULT 0');
+  addColumnIfNotExists(db, 'users', 'last_daily_reward_date', 'TEXT');
   addColumnIfNotExists(db, 'avatars', 'cost_coins', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfNotExists(db, 'avatars', 'currency', "TEXT NOT NULL DEFAULT 'gems'");
 

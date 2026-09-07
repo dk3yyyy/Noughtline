@@ -10,6 +10,7 @@ const { Server } = require('socket.io');
 const { createDatabase, createGuest, publicUser } = require('./database');
 const { createAuth } = require('./auth');
 const { createEconomy, GEM_PACKAGES } = require('./economy');
+const { createQuestService } = require('./quests');
 const { createGoogleAuth } = require('./googleAuth');
 const { RoomManager } = require('./game/roomManager');
 const { Matchmaker } = require('./game/matchmaker');
@@ -42,12 +43,13 @@ function randomRoomId(prefix = '') {
   return `${prefix}${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
 }
 
-function createRuntime({ config, database, fetchImpl, startTimers = true, googleAuth: googleAuthOption } = {}) {
+function createRuntime({ config, database, fetchImpl, startTimers = true, googleAuth: googleAuthOption, questService: questServiceOption } = {}) {
   if (!config) throw new Error('config is required');
   const db = database || createDatabase(config.databasePath);
   const auth = createAuth({ db, config });
   const economy = createEconomy({ db, config, fetchImpl });
   const googleAuth = googleAuthOption || createGoogleAuth({ config, fetchImpl });
+  const questService = questServiceOption || createQuestService({ db, economy });
 
   const settleSeries = (room, roundHistory) => db.transaction(() => {
     const playerX = room.players.find((player) => player.symbol === 'X');
@@ -77,6 +79,10 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
 
     if (!room.rewardEligible) return;
 
+    // Quest progress uses the quest service's injected clock (same source as
+    // the claim endpoints) and is recorded for both players under one day.
+    const questDay = completionReason === 'played' ? questService.currentDay() : null;
+
     for (const player of room.players) {
       const isDraw = room.state.seriesWinner === 'Draw';
       const didWin = winner?.id === player.id;
@@ -99,6 +105,16 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
           reason: 'multiplayer_series_reward',
           reference: `series:${room.seriesId}`,
           metadata: { result: room.state.seriesWinner, xp, completionReason },
+        });
+      }
+      // Quest progress is recorded inside the same settlement transaction, but
+      // only for series played to completion: forfeits are not 'played' and
+      // the rewardEligible guard above already excludes private rooms.
+      if (questDay) {
+        questService.recordSettledSeries({
+          userId: player.id,
+          outcome: didWin ? 'won' : isDraw ? 'draw' : 'lost',
+          day: questDay,
         });
       }
     }
@@ -332,6 +348,26 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
     } catch (error) { return next(error); }
   });
 
+  const questError = (error, res, next) => {
+    if (error && error.code) return res.status(error.status || 409).json({ error: error.message, code: error.code });
+    return next(error);
+  };
+
+  app.get('/api/quests', auth.requireAuth, (req, res) => {
+    const { day, dailyRewardClaimed } = questService.getDailyState(req.user);
+    res.json({ day, dailyRewardClaimed, quests: questService.getQuestsForUser(req.user, day) });
+  });
+  app.post('/api/quests/daily-claim', auth.requireAuth, (req, res, next) => {
+    try {
+      res.json(questService.claimDailyReward(req.user));
+    } catch (error) { return questError(error, res, next); }
+  });
+  app.post('/api/quests/:questId/claim', auth.requireAuth, (req, res, next) => {
+    try {
+      res.json(questService.claimQuest(req.user, req.params.questId));
+    } catch (error) { return questError(error, res, next); }
+  });
+
   app.get('/api/leaderboard', (_req, res) => {
     res.json(db.prepare("SELECT username, avatar, xp, level, wins FROM users WHERE username != 'AI_Bot' ORDER BY xp DESC, wins DESC LIMIT 50").all());
   });
@@ -516,7 +552,7 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
     return new Promise((resolve) => io.close(() => server.close(() => { db.close(); resolve(); })));
   }
 
-  return { app, server, io, db, auth, economy, googleAuth, roomManager, matchmaker, close };
+  return { app, server, io, db, auth, economy, googleAuth, questService, roomManager, matchmaker, close };
 }
 
 module.exports = { createRuntime };
