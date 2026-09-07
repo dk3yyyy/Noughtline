@@ -160,19 +160,45 @@ function createDatabase(databasePath) {
   return db;
 }
 
-function createGuest(db) {
-  const uuid = crypto.randomUUID();
-  const username = `Guest_${crypto.randomBytes(3).toString('hex')}`;
+const GUEST_USERNAME_MAX_ATTEMPTS = 5;
+
+// better-sqlite3 surfaces unique violations as a SqliteError with a `code`
+// property; narrow on the constraint that actually names users.username so
+// unrelated constraint failures (e.g. users.uuid) are rethrown, not retried.
+function isUsernameCollision(error) {
+  return error && error.code === 'SQLITE_CONSTRAINT_UNIQUE' && /users\.username/.test(error.message);
+}
+
+function createGuest(db, options = {}) {
+  const { usernameGenerator } = options;
+  const generateUsername = usernameGenerator || (() => `Guest_${crypto.randomBytes(3).toString('hex')}`);
   const starter = db.prepare("SELECT * FROM avatars WHERE cost_gems = 0 AND cost_coins = 0 ORDER BY id LIMIT 1").get();
-  const result = db.prepare(`
+  const starters = db.prepare('SELECT id FROM avatars WHERE cost_gems = 0 AND cost_coins = 0').all();
+  const insertUser = db.prepare(`
     INSERT INTO users (uuid, username, avatar, active_avatar_id)
     VALUES (?, ?, ?, ?)
-  `).run(uuid, username, starter?.url || null, starter?.id || null);
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(result.lastInsertRowid);
-  const starters = db.prepare('SELECT id FROM avatars WHERE cost_gems = 0 AND cost_coins = 0').all();
+  `);
+  const selectUser = db.prepare('SELECT * FROM users WHERE id = ?');
   const grant = db.prepare('INSERT OR IGNORE INTO user_avatars (user_id, avatar_id) VALUES (?, ?)');
-  db.transaction(() => starters.forEach(({ id }) => grant.run(user.id, id)))();
-  return user;
+  // Insert + starter grants commit atomically; a failed attempt rolls back and
+  // leaves no partial guest row behind for the next attempt.
+  const insertGuest = db.transaction((uuid, username) => {
+    const result = insertUser.run(uuid, username, starter?.url || null, starter?.id || null);
+    const user = selectUser.get(result.lastInsertRowid);
+    starters.forEach(({ id }) => grant.run(user.id, id));
+    return user;
+  });
+
+  let lastCollision;
+  for (let attempt = 0; attempt < GUEST_USERNAME_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      return insertGuest(crypto.randomUUID(), generateUsername());
+    } catch (error) {
+      if (!isUsernameCollision(error)) throw error;
+      lastCollision = error;
+    }
+  }
+  throw lastCollision;
 }
 
 function publicUser(user) {
