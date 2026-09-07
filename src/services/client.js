@@ -75,3 +75,16 @@ export function clearSession() {
   localStorage.removeItem(LEGACY_TOKEN_KEY);
   if (socket) socket.disconnect();
 }
+
+export async function logoutSession() {
+  try {
+    // Revoke the current session server-side (bearer token auto-attached).
+    await api.post('/api/auth/logout');
+  } catch {
+    // Best effort: if the server is unreachable or the token is already
+    // revoked, still abandon the local session below so the app can continue
+    // as a fresh guest.
+  } finally {
+    clearSession();
+  }
+}

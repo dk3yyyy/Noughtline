@@ -107,3 +107,42 @@ test('serves the built SPA without masking unknown API routes', async (t) => {
   assert.match(page.text, /Tic-Tac test/);
   assert.equal((await request(runtime.app).get('/api/does-not-exist')).status, 404);
 });
+
+test('POST /api/auth/logout without a token returns 401', async (t) => {
+  const runtime = createTestRuntime();
+  t.after(() => runtime.db.close());
+  const response = await request(runtime.app).post('/api/auth/logout').send({});
+  assert.equal(response.status, 401);
+  assert.equal(response.body.error, 'Authentication required');
+});
+
+test('POST /api/auth/logout with a valid session returns { success: true }', async (t) => {
+  const runtime = createTestRuntime();
+  t.after(() => runtime.db.close());
+  const session = await guest(runtime);
+  const auth = { Authorization: `Bearer ${session.token}` };
+  const response = await request(runtime.app).post('/api/auth/logout').set(auth).send({});
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body, { success: true });
+});
+
+test('logout revokes the session server-side: the same token fails GET /api/me afterwards', async (t) => {
+  const runtime = createTestRuntime();
+  t.after(() => runtime.db.close());
+  const session = await guest(runtime);
+  const auth = { Authorization: `Bearer ${session.token}` };
+  assert.equal((await request(runtime.app).get('/api/me').set(auth)).status, 200);
+  assert.equal((await request(runtime.app).post('/api/auth/logout').set(auth).send({})).status, 200);
+  const after = await request(runtime.app).get('/api/me').set(auth);
+  assert.equal(after.status, 401);
+});
+
+test('POST /api/auth/logout with an already-revoked token returns 401', async (t) => {
+  const runtime = createTestRuntime();
+  t.after(() => runtime.db.close());
+  const session = await guest(runtime);
+  const auth = { Authorization: `Bearer ${session.token}` };
+  assert.equal((await request(runtime.app).post('/api/auth/logout').set(auth).send({})).status, 200);
+  const second = await request(runtime.app).post('/api/auth/logout').set(auth).send({});
+  assert.equal(second.status, 401);
+});

@@ -257,3 +257,44 @@ test('room lifecycle rate limit is keyed by authenticated user and returns retry
   assert.equal(Number.isSafeInteger(limited.retryAfterMs), true);
   assert.equal(limited.retryAfterMs > 0, true);
 });
+
+test('logout disconnects a live authenticated socket for the revoked user', async (t) => {
+  const runtime = createRuntime({
+    config: testConfig,
+    database: createDatabase(':memory:'),
+    startTimers: false,
+  });
+  // Register teardown immediately so a failure before the client is created
+  // still releases the runtime.
+  const clients = [];
+  t.after(async () => {
+    clients.forEach((client) => client.close());
+    await new Promise((resolve) => runtime.io.close(resolve));
+    await new Promise((resolve) => runtime.server.close(resolve));
+    runtime.db.close();
+  });
+
+  await new Promise((resolve) => runtime.server.listen(0, resolve));
+  const url = `http://127.0.0.1:${runtime.server.address().port}`;
+  const session = await newSession(runtime);
+  const client = createClient(url, { auth: { token: session.token }, transports: ['websocket'], reconnection: false });
+  clients.push(client);
+  await new Promise((resolve, reject) => {
+    client.on('connect', resolve);
+    client.on('connect_error', reject);
+  });
+
+  // The server must drop the socket as part of revocation, not only reject HTTP
+  // requests: socket authority was checked once at connect time.
+  const disconnected = new Promise((resolve, reject) => {
+    client.on('disconnect', (reason) => resolve(reason));
+    setTimeout(() => reject(new Error('socket was not disconnected after logout')), 1500);
+  });
+  const response = await request(runtime.app)
+    .post('/api/auth/logout')
+    .set('Authorization', `Bearer ${session.token}`)
+    .send({});
+  assert.equal(response.status, 200);
+  assert.equal(await disconnected, 'io server disconnect');
+});
+

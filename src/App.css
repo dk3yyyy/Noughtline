@@ -1020,6 +1020,14 @@
   font-weight: 500;
 }
 
+.settings-hint {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  line-height: 1.45;
+  text-align: center;
+}
+
 .toggle-pill {
   min-height: 36px;
   padding: 0 12px;
@@ -1483,7 +1491,7 @@
 .toast span {
   flex: 1;
   min-width: 0;
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .toast-success {
