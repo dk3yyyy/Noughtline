@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { api, clearSession, ensureSession, getSocket, logoutSession } from './services/client';
 import { clearActiveRoom, createInviteUrl, getInviteRoomId, normalizeRoomId, readActiveRoom, saveActiveRoom } from './services/rooms';
 import { mergeToast } from './services/toasts';
+import { dateText, friendlyLedgerReason, outcomeFor, scoreText, signedAmount } from './services/history';
 import {
   Home,
   Trophy,
@@ -11,6 +12,7 @@ import {
   Zap,
   Flame,
   Gem,
+  History,
   Coins,
   Settings,
   ChevronLeft,
@@ -25,6 +27,7 @@ import {
   Link2,
   Share2,
   AlertTriangle,
+  Wallet,
   LogOut
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -208,6 +211,80 @@ const BottomNav = ({ activeTab, setActiveTab }) => {
         );
       })}
     </div>
+  );
+};
+
+// --- PROFILE Activity lists ---
+
+const OUTCOME_LABEL = { won: 'Won', lost: 'Lost', draw: 'Draw' };
+
+const MatchHistoryList = ({ matches, userId }) => {
+  if (matches.length === 0) {
+    return <p className="activity-empty">No matches yet — play a multiplayer series!</p>;
+  }
+  return (
+    <ul className="activity-list" aria-label="Match history">
+      {matches.map(row => {
+        const outcome = outcomeFor(row, userId);
+        const outcomeLabel = OUTCOME_LABEL[outcome];
+        const userSide = Number(row.player_x_id) === Number(userId) ? 'X' : 'O';
+        const rounds = row.rounds_played || 0;
+        const roundsLabel = `${rounds} ${rounds === 1 ? 'round' : 'rounds'}`;
+        const size = row.board_size || 3;
+        return (
+          <li className="activity-row" key={row.id}>
+            <span className="activity-avatar-wrap">
+              {row.opponent_avatar ? (
+                <img src={row.opponent_avatar} alt="" className="activity-avatar" />
+              ) : (
+                <span className="activity-avatar activity-avatar-fallback"><User size={18} /></span>
+              )}
+            </span>
+            <div className="activity-main">
+              <span className="activity-name">{row.opponent_username || 'Unknown player'}</span>
+              <span className="activity-meta">{size}×{size} · {roundsLabel} · {dateText(row.completed_at)}</span>
+            </div>
+            <div className="activity-result">
+              <span className={`outcome-pill outcome-${outcome}`} aria-label={`${outcomeLabel} the series ${scoreText(row)}`}>
+                {outcomeLabel}{outcome === 'draw' ? '' : ` · as ${userSide}`}
+              </span>
+              <span className="activity-score">{scoreText(row)}</span>
+            </div>
+          </li>
+        );
+      })}
+    </ul>
+  );
+};
+
+const WalletLedgerList = ({ ledger }) => {
+  if (ledger.length === 0) {
+    return <p className="activity-empty">No wallet activity yet.</p>;
+  }
+  return (
+    <ul className="activity-list" aria-label="Wallet activity">
+      {ledger.map(entry => {
+        const isCoins = entry.currency === 'coins';
+        const positive = Number(entry.amount) > 0;
+        const CurrencyIcon = isCoins ? Coins : Gem;
+        const currencyLabel = isCoins ? 'Coins' : 'Gems';
+        return (
+          <li className="activity-row" key={entry.id}>
+            <span className={`activity-avatar-wrap currency-badge ${isCoins ? 'currency-coins' : 'currency-gems'}`}>
+              <CurrencyIcon size={18} color={isCoins ? '#fbbf24' : '#2dd4bf'} aria-hidden="true" />
+            </span>
+            <div className="activity-main">
+              <span className="activity-name">{friendlyLedgerReason(entry.reason) || currencyLabel}</span>
+              <span className="activity-meta">{currencyLabel} · {dateText(entry.created_at)}</span>
+            </div>
+            <div className="activity-result">
+              <span className={`activity-amount ${positive ? 'amount-positive' : 'amount-negative'}`}>{signedAmount(entry)}</span>
+              <span className="activity-score">Balance {entry.balance_after}</span>
+            </div>
+          </li>
+        );
+      })}
+    </ul>
   );
 };
 
@@ -1043,6 +1120,13 @@ export default function App() {
   const [gemPackages, setGemPackages] = useState([]);
   const [stats, setStats] = useState({ streak: 0, xp: 0, coins: 0 });
 
+  // PROFILE activity: match history + wallet ledger.
+  const [activityTab, setActivityTab] = useState('matches');
+  const [matches, setMatches] = useState([]);
+  const [ledger, setLedger] = useState([]);
+  const [activityLoading, setActivityLoading] = useState(false);
+  const [activityError, setActivityError] = useState('');
+
   // Modal States
   const [showBuyGems, setShowBuyGems] = useState(false);
   const [selectedShopItem, setSelectedShopItem] = useState(null);
@@ -1055,6 +1139,22 @@ export default function App() {
       const invRes = await api.get('/api/me/inventory');
       setInventory(invRes.data);
     } catch (error) { console.error("Sync error", error); }
+  }, []);
+
+  // Match history + wallet ledger share one fetch so PROFILE shows both lists
+  // from a single activation; a retry button can re-run it on failure.
+  const fetchActivity = useCallback(async () => {
+    setActivityLoading(true);
+    setActivityError('');
+    try {
+      const [matchesRes, ledgerRes] = await Promise.all([api.get('/api/me/matches'), api.get('/api/me/ledger')]);
+      setMatches(matchesRes.data);
+      setLedger(ledgerRes.data);
+    } catch {
+      setActivityError('Could not load activity. Check your connection and try again.');
+    } finally {
+      setActivityLoading(false);
+    }
   }, []);
 
   // Server-issued guest session. The browser never chooses the account ID.
@@ -1133,6 +1233,13 @@ export default function App() {
         .catch(e => console.error(e));
     }
   }, [activeTab]);
+
+  // Refresh match history + ledger every time the PROFILE view is activated so
+  // newly completed series and purchases show up without a manual reload.
+  useEffect(() => {
+    if (view !== 'PROFILE' || !user.id) return;
+    fetchActivity();
+  }, [view, user.id, fetchActivity]);
 
   const sounds = useSound(userConfig.sound);
   const {
@@ -1825,6 +1932,66 @@ export default function App() {
                   <span className="stat-val">{stats.streak}</span>
                   <span className="stat-label">Streak</span>
                 </div>
+              </div>
+
+              <div className="activity-card glass">
+                <div className="activity-head">
+                  <h3 className="activity-title">Activity</h3>
+                  <div className="activity-tabs" role="group" aria-label="Activity type">
+                    <button
+                      type="button"
+                      className={`activity-tab ${activityTab === 'matches' ? 'active' : ''}`}
+                      aria-pressed={activityTab === 'matches'}
+                      onClick={() => setActivityTab('matches')}
+                    >
+                      <History size={15} /> Matches
+                    </button>
+                    <button
+                      type="button"
+                      className={`activity-tab ${activityTab === 'wallet' ? 'active' : ''}`}
+                      aria-pressed={activityTab === 'wallet'}
+                      onClick={() => setActivityTab('wallet')}
+                    >
+                      <Wallet size={15} /> Wallet
+                    </button>
+                  </div>
+                </div>
+
+                {activityError ? (
+                  <div className="activity-state" role="alert">
+                    <AlertTriangle size={18} className="activity-state-icon" />
+                    <p>{activityError}</p>
+                    <button type="button" className="btn-gray activity-retry" onClick={fetchActivity}>Try again</button>
+                  </div>
+                ) : activityLoading && matches.length === 0 && ledger.length === 0 ? (
+                  <p className="activity-state" role="status">Loading activity…</p>
+                ) : (
+                  <AnimatePresence mode="wait" initial={false}>
+                    {activityTab === 'matches' ? (
+                      <motion.div
+                        key="activity-matches"
+                        className="activity-pane"
+                        initial={{ opacity: 0, y: 6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -6 }}
+                        transition={{ duration: 0.16 }}
+                      >
+                        <MatchHistoryList matches={matches} userId={user.id} />
+                      </motion.div>
+                    ) : (
+                      <motion.div
+                        key="activity-wallet"
+                        className="activity-pane"
+                        initial={{ opacity: 0, y: 6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -6 }}
+                        transition={{ duration: 0.16 }}
+                      >
+                        <WalletLedgerList ledger={ledger} />
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                )}
               </div>
 
               <h3 className="collection-title">My Collection</h3>

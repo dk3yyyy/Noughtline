@@ -179,7 +179,18 @@ function createRuntime({ config, database, fetchImpl, startTimers = true } = {})
     res.json(db.prepare('SELECT id, currency, amount, balance_after, reason, reference, created_at FROM currency_ledger WHERE user_id = ? ORDER BY created_at DESC LIMIT 100').all(req.user.id));
   });
   app.get('/api/me/matches', auth.requireAuth, (req, res) => {
-    res.json(db.prepare('SELECT * FROM series_results WHERE player_x_id = ? OR player_o_id = ? ORDER BY completed_at DESC LIMIT 50').all(req.user.id, req.user.id));
+    res.json(db.prepare(`
+      SELECT sr.*,
+             opponent.username AS opponent_username,
+             opponent.avatar AS opponent_avatar
+      FROM series_results sr
+      LEFT JOIN users opponent ON opponent.id = CASE
+        WHEN sr.player_x_id = ? THEN sr.player_o_id
+        ELSE sr.player_x_id
+      END
+      WHERE sr.player_x_id = ? OR sr.player_o_id = ?
+      ORDER BY sr.completed_at DESC LIMIT 50
+    `).all(req.user.id, req.user.id, req.user.id));
   });
   app.get('/api/me/export', auth.requireAuth, (req, res) => {
     const inventory = db.prepare('SELECT avatar_id, purchased_at FROM user_avatars WHERE user_id = ?').all(req.user.id);
