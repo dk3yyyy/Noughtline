@@ -7,6 +7,7 @@ import {
   normalizeGoogleError,
   parseProviderResponse,
   resetGsiScriptLoader,
+  signInAvailability,
 } from '../src/services/google.js';
 
 // --- parseProviderResponse ---
@@ -174,4 +175,24 @@ test('loadGsiScript shares one in-flight promise for concurrent callers', async 
   assert.equal(doc.scripts.length, 1);
   doc.scripts[0].onload();
   await first;
+});
+
+// --- signInAvailability ---
+
+test('signInAvailability reports enabled only when configured and a client id is compiled in', () => {
+  assert.equal(signInAvailability({ configured: true, loaded: true, clientId: 'x.apps.googleusercontent.com' }), 'enabled');
+  assert.equal(signInAvailability({ configured: false, loaded: true, clientId: 'x.apps.googleusercontent.com' }), 'unconfigured');
+  assert.equal(signInAvailability({ configured: true, loaded: true, clientId: '' }), 'unconfigured');
+  assert.equal(signInAvailability({ configured: true, loaded: true, clientId: '   ' }), 'unconfigured');
+});
+
+test('signInAvailability reports unknown before the providers endpoint resolves', () => {
+  // The initial state: no fetch result yet. Clicking must not claim
+  // 'unconfigured' during this window (cold start / slow first load).
+  assert.equal(signInAvailability({ configured: false, loaded: false, clientId: 'x' }), 'unknown');
+  assert.equal(signInAvailability({ configured: false, loaded: false, clientId: '' }), 'unknown');
+});
+
+test('signInAvailability treats a failed providers fetch as loaded-unconfigured', () => {
+  assert.equal(signInAvailability({ configured: false, loaded: true, clientId: 'x' }), 'unconfigured');
 });
