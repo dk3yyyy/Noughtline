@@ -50,6 +50,8 @@ test('friendlyLedgerReason maps known ledger reasons to readable labels', () => 
   assert.equal(friendlyLedgerReason('avatar_purchase'), 'Avatar purchase');
   assert.equal(friendlyLedgerReason('multiplayer_series_reward'), 'Series reward');
   assert.equal(friendlyLedgerReason('paystack_purchase'), 'Gem purchase');
+  assert.equal(friendlyLedgerReason('daily_reward'), 'Daily reward');
+  assert.equal(friendlyLedgerReason('quest_reward'), 'Quest reward');
 });
 
 test('friendlyLedgerReason falls back to the raw reason for unknown entries', () => {

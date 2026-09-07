@@ -8,6 +8,8 @@ const LEDGER_REASON_LABELS = {
   avatar_purchase: 'Avatar purchase',
   multiplayer_series_reward: 'Series reward',
   paystack_purchase: 'Gem purchase',
+  daily_reward: 'Daily reward',
+  quest_reward: 'Quest reward',
 };
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
