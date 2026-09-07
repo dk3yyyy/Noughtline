@@ -3,6 +3,7 @@ import { api, adoptSessionToken, clearSession, ensureSession, getSocket, logoutS
 import { clearActiveRoom, createInviteUrl, getInviteRoomId, normalizeRoomId, readActiveRoom, saveActiveRoom } from './services/rooms';
 import { mergeToast } from './services/toasts';
 import { dateText, friendlyLedgerReason, outcomeFor, scoreText, signedAmount } from './services/history';
+import { canClaimQuest, DAILY_REWARD, dailyRewardCopy, questComplete, questProgressLabel, rewardLabel } from './services/quests';
 import { GOOGLE_CLIENT_ID } from './config';
 import { buildGoogleIdConfig, loadGsiScript, normalizeGoogleError, parseProviderResponse, signInAvailability } from './services/google';
 import {
@@ -30,6 +31,7 @@ import {
   Share2,
   AlertTriangle,
   Wallet,
+  Gift,
   LogOut
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -292,6 +294,238 @@ const WalletLedgerList = ({ ledger }) => {
         );
       })}
     </ul>
+  );
+};
+
+// --- PROFILE Quests card (daily reward + daily quests) ---
+
+const QuestRewardChip = ({ reward }) => {
+  const isCoins = reward && reward.currency === 'coins';
+  const Icon = isCoins ? Coins : Gem;
+  return (
+    <span className={`quest-reward-chip ${isCoins ? 'is-coins' : 'is-gems'}`}>
+      <Icon size={13} color={isCoins ? '#fbbf24' : '#2dd4bf'} aria-hidden="true" />
+      {rewardLabel(reward)}
+    </span>
+  );
+};
+
+const QuestClaimedButton = () => (
+  <button type="button" className="btn-gray quest-claim-btn is-claimed" aria-disabled="true">
+    <Check size={13} aria-hidden="true" /> Claimed
+  </button>
+);
+
+// Self-contained card so the Activity card's shared matches/ledger state
+// machine and error handling stay untouched. Quest state lives here and is
+// reset on every PROFILE activation (the view unmounts the card) and on
+// identity change (the userId effect below), mirroring the App-level
+// AbortController + identity-guard pattern used by fetchActivity.
+const QuestCard = ({ userId, notify, onBalanceChange }) => {
+  // Identity captured at request start; responses from a previous guest must
+  // never populate the next guest's quest state.
+  const uidRef = useRef(userId);
+  useEffect(() => { uidRef.current = userId; }, [userId]);
+  const activeRequestRef = useRef(null);
+
+  const [questsDay, setQuestsDay] = useState('');
+  const [quests, setQuests] = useState([]);
+  const [dailyClaimed, setDailyClaimed] = useState(false);
+  const [questsLoading, setQuestsLoading] = useState(false);
+  const [questsError, setQuestsError] = useState('');
+  const [claimingDaily, setClaimingDaily] = useState(false);
+  const [claimingQuestId, setClaimingQuestId] = useState(null);
+
+  const loadQuests = useCallback(async (signal) => {
+    const uid = uidRef.current;
+    if (!uid) return;
+    if (!signal) {
+      // Manual retry/refresh: supersede any in-flight GET.
+      if (activeRequestRef.current) activeRequestRef.current.abort();
+      const controller = new AbortController();
+      activeRequestRef.current = controller;
+      signal = controller.signal;
+    }
+    setQuestsLoading(true);
+    setQuestsError('');
+    try {
+      const { data } = await api.get('/api/quests', { signal });
+      if (signal.aborted || uidRef.current !== uid) return;
+      setQuestsDay(data.day || '');
+      setQuests(Array.isArray(data.quests) ? data.quests : []);
+      setDailyClaimed(Boolean(data.dailyRewardClaimed));
+    } catch (error) {
+      if (error?.code === 'ERR_CANCELED' || signal.aborted || uidRef.current !== uid) return;
+      setQuestsError('Could not load quests. Check your connection and try again.');
+    } finally {
+      if (!signal.aborted && uidRef.current === uid) setQuestsLoading(false);
+    }
+  }, []);
+
+  // Load once per PROFILE activation / identity. The cleanup aborts the
+  // in-flight GET when the card unmounts (view change) or userId changes.
+  useEffect(() => {
+    if (!userId) return;
+    setQuests([]);
+    setQuestsDay('');
+    setDailyClaimed(false);
+    setQuestsError('');
+    setClaimingDaily(false);
+    setClaimingQuestId(null);
+    const controller = new AbortController();
+    activeRequestRef.current = controller;
+    loadQuests(controller.signal);
+    return () => {
+      controller.abort();
+      // A manual refresh (claim/retry) may have superseded this controller;
+      // abort that too so nothing settles state after the card unmounts.
+      if (activeRequestRef.current && activeRequestRef.current !== controller) activeRequestRef.current.abort();
+    };
+  }, [userId, loadQuests]);
+
+  const claimDailyReward = async () => {
+    if (claimingDaily || dailyClaimed || !uidRef.current) return;
+    const uid = uidRef.current;
+    setClaimingDaily(true);
+    try {
+      await api.post('/api/quests/daily-claim');
+      if (uidRef.current !== uid) return;
+      notify('Daily reward claimed!', 'success');
+      await Promise.all([loadQuests(), onBalanceChange && onBalanceChange()]);
+    } catch (error) {
+      if (uidRef.current !== uid) return;
+      const code = error?.response?.data?.code;
+      if (code === 'DAILY_REWARD_CLAIMED') {
+        // The server had already credited today — trust it and re-sync.
+        notify('Daily reward already claimed today.', 'info');
+        await loadQuests();
+      } else {
+        notify('Could not claim the daily reward. Try again.', 'error');
+      }
+    } finally {
+      if (uidRef.current === uid) setClaimingDaily(false);
+    }
+  };
+
+  const claimQuestReward = async (questId) => {
+    if (claimingQuestId || !uidRef.current) return;
+    const uid = uidRef.current;
+    setClaimingQuestId(questId);
+    try {
+      const { data } = await api.post(`/api/quests/${questId}/claim`);
+      if (uidRef.current !== uid) return;
+      notify(`Reward claimed: ${rewardLabel(data && data.reward)}`, 'success');
+      await Promise.all([loadQuests(), onBalanceChange && onBalanceChange()]);
+    } catch (error) {
+      if (uidRef.current !== uid) return;
+      const code = error?.response?.data?.code;
+      if (code === 'QUEST_ALREADY_CLAIMED') {
+        notify('Quest reward already claimed.', 'info');
+        await loadQuests();
+      } else if (code === 'QUEST_INCOMPLETE') {
+        notify('Quest is not complete yet — keep playing!', 'error');
+      } else if (code === 'UNKNOWN_QUEST') {
+        notify('Quest not found. Try again later.', 'error');
+      } else {
+        notify('Could not claim the quest reward. Try again.', 'error');
+      }
+    } finally {
+      if (uidRef.current === uid) setClaimingQuestId(null);
+    }
+  };
+
+  const showContent = quests.length > 0 && !questsError;
+
+  return (
+    <div className="quest-card glass">
+      <div className="activity-head quest-head">
+        <h3 className="activity-title">Quests</h3>
+        {questsDay && <span className="quest-head-day">Today · {questsDay}</span>}
+      </div>
+
+      {questsError ? (
+        <div className="activity-state" role="alert">
+          <AlertTriangle size={18} className="activity-state-icon" />
+          <p>{questsError}</p>
+          <button type="button" className="btn-gray activity-retry" onClick={() => loadQuests()}>Try again</button>
+        </div>
+      ) : questsLoading && !showContent ? (
+        <p className="activity-state" role="status">Loading quests…</p>
+      ) : (
+        <div className="quest-pane">
+          <div className={`quest-daily ${dailyClaimed ? 'is-claimed' : ''}`} role="group" aria-label={dailyRewardCopy()}>
+            <span className="quest-daily-icon" aria-hidden="true">
+              <Gift size={19} />
+            </span>
+            <div className="quest-daily-main">
+              <span className="quest-daily-title">Daily reward</span>
+              <div className="quest-daily-chips">
+                <QuestRewardChip reward={{ currency: 'coins', amount: DAILY_REWARD.coins }} />
+                <QuestRewardChip reward={{ currency: 'gems', amount: DAILY_REWARD.gems }} />
+              </div>
+            </div>
+            {dailyClaimed ? (
+              <QuestClaimedButton />
+            ) : (
+              <button
+                type="button"
+                className="btn-teal quest-claim-btn"
+                onClick={claimDailyReward}
+                disabled={claimingDaily}
+                aria-busy={claimingDaily}
+              >
+                {claimingDaily ? 'Claiming…' : 'Claim daily reward'}
+              </button>
+            )}
+          </div>
+
+          {quests.length === 0 ? (
+            <p className="activity-empty">No quests available right now — check back soon!</p>
+          ) : (
+            <ul className="quest-list" aria-label="Daily quests">
+              {quests.map(quest => {
+                const KindIcon = quest.kind === 'win' ? Trophy : Swords;
+                const complete = questComplete(quest);
+                const claimable = canClaimQuest(quest);
+                const claiming = claimingQuestId === quest.id;
+                const percent = Math.min(100, Math.max(0, (Number(quest.progress) / (Number(quest.target) || 1)) * 100));
+                return (
+                  <li className={`quest-row ${complete ? 'is-complete' : ''}`} key={quest.id}>
+                    <span className="quest-kind-badge" data-kind={quest.kind} aria-hidden="true">
+                      <KindIcon size={18} color={quest.kind === 'win' ? '#fbbf24' : '#49d6b4'} />
+                    </span>
+                    <div className="quest-main">
+                      <span className="quest-name">{quest.description}</span>
+                      <div className="quest-track" aria-hidden="true">
+                        <div className="quest-track-fill" style={{ width: `${percent}%` }} />
+                      </div>
+                      <div className="quest-meta">
+                        <span className="quest-count">{questProgressLabel(quest)}</span>
+                        <QuestRewardChip reward={quest.reward} />
+                      </div>
+                    </div>
+                    {quest.claimed ? (
+                      <QuestClaimedButton />
+                    ) : (
+                      <button
+                        type="button"
+                        className={`quest-claim-btn ${claimable ? 'btn-teal' : 'btn-gray'}`}
+                        onClick={() => claimQuestReward(quest.id)}
+                        disabled={!claimable || claiming}
+                        aria-busy={claiming}
+                        aria-label={claimable ? `Claim ${rewardLabel(quest.reward)}` : undefined}
+                      >
+                        {claiming ? 'Claiming…' : 'Claim'}
+                      </button>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
   );
 };
 
@@ -2220,6 +2454,8 @@ export default function App() {
                   </AnimatePresence>
                 )}
               </div>
+
+              <QuestCard userId={user.id} notify={notify} onBalanceChange={fetchUserData} />
 
               <h3 className="collection-title">My Collection</h3>
               <div className="inventory-grid">

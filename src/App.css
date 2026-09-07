@@ -974,6 +974,232 @@
   text-align: center;
 }
 
+/* --- PROFILE Quests card (daily reward + daily quests) --- */
+
+.quest-card {
+  margin-top: 28px;
+  padding: 18px;
+  border-radius: 12px;
+}
+
+.quest-head {
+  margin-bottom: 14px;
+}
+
+.quest-head-day {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+}
+
+.quest-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+/* Daily reward banner */
+.quest-daily {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid rgba(245, 196, 81, 0.32);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--gold) 6%, var(--surface));
+  transition: border-color 160ms ease, background-color 160ms ease;
+}
+
+.quest-daily.is-claimed {
+  border-color: rgba(73, 214, 180, 0.35);
+  background: color-mix(in srgb, var(--success) 5%, var(--surface));
+}
+
+.quest-daily-icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid rgba(245, 196, 81, 0.35);
+  border-radius: 9px;
+  color: var(--gold);
+  background: var(--surface-strong);
+}
+
+.quest-daily.is-claimed .quest-daily-icon {
+  border-color: rgba(73, 214, 180, 0.35);
+  color: var(--success);
+}
+
+.quest-daily-main {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.quest-daily-title {
+  color: var(--text-main);
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.quest-daily-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* Quest rows */
+.quest-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.quest-row {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 84px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+  transition: border-color 160ms ease, background-color 160ms ease;
+}
+
+.quest-row:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+}
+
+.quest-row.is-complete {
+  border-color: rgba(73, 214, 180, 0.3);
+}
+
+.quest-kind-badge {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface-strong);
+}
+
+.quest-kind-badge[data-kind='play'] {
+  border-color: rgba(73, 214, 180, 0.25);
+}
+
+.quest-kind-badge[data-kind='win'] {
+  border-color: rgba(251, 191, 36, 0.25);
+}
+
+.quest-main {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.quest-name {
+  overflow: hidden;
+  color: var(--text-main);
+  font-size: 0.88rem;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quest-track {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-strong);
+}
+
+.quest-track-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent-purple);
+  transition: width 320ms ease, background-color 160ms ease;
+}
+
+.quest-row.is-complete .quest-track-fill {
+  background: var(--success);
+}
+
+.quest-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.quest-count {
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  white-space: nowrap;
+}
+
+/* Reward chips */
+.quest-reward-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  font-weight: 500;
+  line-height: 1.7;
+  white-space: nowrap;
+}
+
+.quest-reward-chip.is-coins {
+  border-color: rgba(251, 191, 36, 0.35);
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.08);
+}
+
+.quest-reward-chip.is-gems {
+  border-color: rgba(45, 212, 191, 0.35);
+  color: #2dd4bf;
+  background: rgba(45, 212, 191, 0.08);
+}
+
+/* Claim buttons */
+.quest-claim-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 8px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.quest-claim-btn.is-claimed {
+  cursor: default;
+  opacity: 0.72;
+}
+
+.quest-row > .quest-claim-btn {
+  justify-self: end;
+}
+
 .btn-teal,
 .btn-pink,
 .btn-orange,
@@ -1975,5 +2201,25 @@
 
   .player-card {
     grid-template-rows: auto auto;
+  }
+}
+
+@media (max-width: 440px) {
+  .quest-daily {
+    grid-template-columns: 44px minmax(0, 1fr);
+  }
+
+  .quest-daily > .quest-claim-btn {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .quest-row {
+    grid-template-columns: 44px minmax(0, 1fr);
+  }
+
+  .quest-row > .quest-claim-btn {
+    grid-column: 1 / -1;
+    width: 100%;
   }
 }
