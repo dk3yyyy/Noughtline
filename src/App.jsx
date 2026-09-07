@@ -1529,8 +1529,12 @@ export default function App() {
       setView('HOME');
       setShowSettings(false);
     } catch {
-      setLogoutPending(false);
-      notify('Log out failed. Please try again.', 'error');
+      // logoutSession() always clears the local session before resolving, so by
+      // the time we land here the old identity is already invalid locally and
+      // possibly revoked server-side. Rendering the abandoned guest's data any
+      // longer is stale, so hard-reset to the guest bootstrap instead.
+      clearSession();
+      window.location.reload();
     }
   };
 

@@ -264,19 +264,24 @@ test('logout disconnects a live authenticated socket for the revoked user', asyn
     database: createDatabase(':memory:'),
     startTimers: false,
   });
+  // Register teardown immediately so a failure before the client is created
+  // still releases the runtime.
+  const clients = [];
+  t.after(async () => {
+    clients.forEach((client) => client.close());
+    await new Promise((resolve) => runtime.io.close(resolve));
+    await new Promise((resolve) => runtime.server.close(resolve));
+    runtime.db.close();
+  });
+
   await new Promise((resolve) => runtime.server.listen(0, resolve));
   const url = `http://127.0.0.1:${runtime.server.address().port}`;
   const session = await newSession(runtime);
   const client = createClient(url, { auth: { token: session.token }, transports: ['websocket'], reconnection: false });
+  clients.push(client);
   await new Promise((resolve, reject) => {
     client.on('connect', resolve);
     client.on('connect_error', reject);
-  });
-  t.after(async () => {
-    client.close();
-    await new Promise((resolve) => runtime.io.close(resolve));
-    await new Promise((resolve) => runtime.server.close(resolve));
-    runtime.db.close();
   });
 
   // The server must drop the socket as part of revocation, not only reject HTTP
