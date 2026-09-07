@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { api, clearSession, ensureSession, getSocket, logoutSession } from './services/client';
+import { api, adoptSessionToken, clearSession, ensureSession, getSocket, logoutSession } from './services/client';
 import { clearActiveRoom, createInviteUrl, getInviteRoomId, normalizeRoomId, readActiveRoom, saveActiveRoom } from './services/rooms';
 import { mergeToast } from './services/toasts';
 import { dateText, friendlyLedgerReason, outcomeFor, scoreText, signedAmount } from './services/history';
+import { GOOGLE_CLIENT_ID } from './config';
+import { buildGoogleIdConfig, isGoogleEnabled, loadGsiScript, normalizeGoogleError, parseProviderResponse } from './services/google';
 import {
   Home,
   Trophy,
@@ -63,6 +65,11 @@ const useSound = (enabled) => useMemo(() => {
 
 // --- Toast Hook ---
 const TOAST_DURATION_MS = 3200;
+
+// Safety net for the Google sign-in prompt: if GIS never resolves a moment or
+// returns a credential (e.g. a chooser closed in a way GIS does not report),
+// the button must not stay disabled forever.
+const GOOGLE_PROMPT_TIMEOUT_MS = 60000;
 
 const useToasts = () => {
   const [toasts, setToasts] = useState([]);
@@ -1131,6 +1138,23 @@ export default function App() {
   const [activityLoading, setActivityLoading] = useState(false);
   const [activityError, setActivityError] = useState('');
 
+  // Google account linking: the server reports whether the provider is
+  // configured (checked once on mount, defensively) and the button only runs
+  // a real GIS sign-in when that is true AND a client id is compiled in.
+  const [googleProviderConfigured, setGoogleProviderConfigured] = useState(false);
+  const [googleSignInPending, setGoogleSignInPending] = useState(false);
+  const googleSignInBusyRef = useRef(false);   // synchronous in-flight guard (state lags)
+  const googlePromptTimerRef = useRef(null);   // non-stuck safety net for the GIS prompt
+
+  // Unmount safety: a pending prompt safety timer must never fire after the
+  // component is gone (setState on an unmounted component is a no-op warning).
+  useEffect(() => () => {
+    if (googlePromptTimerRef.current !== null) {
+      window.clearTimeout(googlePromptTimerRef.current);
+      googlePromptTimerRef.current = null;
+    }
+  }, []);
+
   // Modal States
   const [showBuyGems, setShowBuyGems] = useState(false);
   const [selectedShopItem, setSelectedShopItem] = useState(null);
@@ -1183,6 +1207,18 @@ export default function App() {
   useEffect(() => {
     api.get('/api/shop/items').then(res => setShopItems(res.data));
     api.get('/api/economy/gem-packages').then(res => setGemPackages(res.data));
+  }, []);
+
+  // Google provider availability (public, defensive). A missing endpoint, an
+  // unreachable server or an unconfigured response all mean "not configured":
+  // the sign-in button then keeps its informational behavior instead of
+  // attempting a GIS flow that would fail server-side.
+  useEffect(() => {
+    let alive = true;
+    api.get('/api/auth/providers')
+      .then(res => { if (alive) setGoogleProviderConfigured(parseProviderResponse(res.data)); })
+      .catch(() => { /* stays false */ });
+    return () => { alive = false; };
   }, []);
 
   // Connection State: null means the authenticated socket is still bootstrapping.
@@ -1573,8 +1609,148 @@ export default function App() {
     setView('GAME');
   };
 
+  // --- Google account linking ---
+  // googleEnabled is true only when the server reports the provider configured
+  // AND this build carries a VITE_GOOGLE_CLIENT_ID. With no credentials
+  // deployed the button degrades to the informational toast below.
+  const googleEnabled = isGoogleEnabled(googleProviderConfigured, GOOGLE_CLIENT_ID);
+
+  const clearGooglePromptTimer = () => {
+    if (googlePromptTimerRef.current !== null) {
+      window.clearTimeout(googlePromptTimerRef.current);
+      googlePromptTimerRef.current = null;
+    }
+  };
+
+  const resetGoogleSignInBusy = () => {
+    // Always disarm the safety timer, even if busy is already false: an armed
+    // timer must never outlive the flow that created it.
+    clearGooglePromptTimer();
+    if (!googleSignInBusyRef.current) return;
+    googleSignInBusyRef.current = false;
+    setGoogleSignInPending(false);
+  };
+
+  // POST /api/auth/google with the id_token + the single-use nonce, then apply
+  // the server's decision: linked:true keeps the current guest (which just
+  // gained an email), switched:true means the fresh guest was revoked and this
+  // token belongs to the already-linked account.
+  const linkGoogleCredential = async (credential, nonce) => {
+    try {
+      const { data } = await api.post('/api/auth/google', { idToken: credential, nonce });
+      if (data && data.switched) {
+        if (!data.token) {
+          throw new Error('The server did not return a session for the linked account. Please try again.');
+        }
+        // Adopt the existing account's token and reconnect the socket under
+        // the new identity before fetching anything.
+        adoptSessionToken(data.token);
+        // Drop the revoked guest's room descriptor so the fresh socket cannot
+        // auto-resume into it (mirrors the logout path).
+        clearActiveRoom(localStorage);
+        setActivityTab('matches');
+        setMatches([]);
+        setLedger([]);
+        setActivityLoading(false);
+        setActivityError('');
+      }
+      // Refresh the profile: the guest-notice unmounts once user.email exists
+      // and (for switched:true) the user.id change re-triggers activity sync.
+      await fetchUserData();
+      notify('Signed in with Google', 'success');
+    } catch (error) {
+      // 401/409/503 messages come from the server and are shown verbatim
+      // (the GOOGLE_LINK_CONFLICT body explains the export/delete path).
+      const { message, canceled } = normalizeGoogleError(error);
+      if (!canceled && message) notify(message, 'error');
+    } finally {
+      resetGoogleSignInBusy();
+    }
+  };
+
   const handleGoogleLogin = () => {
-    notify('Google account linking is disabled until real OAuth credentials and server-side token verification are configured.', 'info', 6000);
+    // Synchronous guard: never double-submit, even on rapid clicks before
+    // React has re-rendered the disabled state.
+    if (googleSignInBusyRef.current) return;
+
+    if (!googleEnabled) {
+      notify('Google sign-in will be enabled once credentials are configured.', 'info', 6000);
+      return;
+    }
+
+    googleSignInBusyRef.current = true;
+    setGoogleSignInPending(true);
+
+    // The GIS flow is callback-driven, so the busy state is released by the
+    // credential callback, a prompt moment, or the safety timeout — not when
+    // this async continuation returns after calling prompt().
+    (async () => {
+      let nonce = null;
+      try {
+        // The nonce is single-use server-side and session-bound: request a
+        // fresh one per attempt and never reuse it after a failure/cancel.
+        try {
+          const nonceRes = await api.post('/api/auth/google/nonce');
+          nonce = nonceRes.data && nonceRes.data.nonce;
+        } catch (error) {
+          if (error.response?.status !== 401) throw error;
+          // Stale session: the 401 response already dropped the stored token,
+          // so bootstrap a fresh guest session, then retry the nonce once.
+          await ensureSession();
+          const nonceRes = await api.post('/api/auth/google/nonce');
+          nonce = nonceRes.data && nonceRes.data.nonce;
+        }
+        if (!nonce) throw new Error('Google sign-in could not be started. Please try again.');
+
+        await loadGsiScript();
+        const gsiId = window.google && window.google.accounts && window.google.accounts.id;
+        if (!gsiId) throw new Error('Google sign-in is unavailable in this browser.');
+
+        const config = buildGoogleIdConfig({
+          clientId: GOOGLE_CLIENT_ID,
+          nonce,
+          callback: (response) => {
+            const credential = response && response.credential;
+            if (!credential) {
+              // Prompt resolved without a token: leave the session untouched.
+              resetGoogleSignInBusy();
+              return;
+            }
+            // A credential means the flow is moving to the server exchange:
+            // disarm the safety timer so it cannot fire during the request.
+            clearGooglePromptTimer();
+            linkGoogleCredential(credential, nonce);
+          },
+        });
+        if (!config) throw new Error('Google sign-in is not configured correctly.');
+
+        gsiId.initialize(config);
+        // Safety net armed BEFORE prompt(): if GIS neither returns a
+        // credential nor reports a moment (e.g. a chooser closed in an
+        // unreported way), never leave the button stuck in the busy state.
+        googlePromptTimerRef.current = window.setTimeout(() => {
+          const currentGsi = window.google && window.google.accounts && window.google.accounts.id;
+          if (currentGsi && typeof currentGsi.cancel === 'function') currentGsi.cancel();
+          resetGoogleSignInBusy();
+        }, GOOGLE_PROMPT_TIMEOUT_MS);
+        // If the prompt is skipped or dismissed (or suppressed, in the legacy
+        // iframe flow) no credential callback ever fires, so release the busy
+        // state on those moments. A pure "display" moment (legacy flow, chooser
+        // open) is ignored so the button stays disabled while it is showing.
+        const onPromptMoment = (notification) => {
+          if (!notification) return;
+          const resolvedWithoutCredential = (typeof notification.isSkippedMoment === 'function' && notification.isSkippedMoment())
+            || (typeof notification.isDismissedMoment === 'function' && notification.isDismissedMoment())
+            || (typeof notification.isNotDisplayed === 'function' && notification.isNotDisplayed());
+          if (resolvedWithoutCredential) resetGoogleSignInBusy();
+        };
+        gsiId.prompt(onPromptMoment);
+      } catch (error) {
+        const { message, canceled } = normalizeGoogleError(error);
+        if (!canceled && message) notify(message, 'error');
+        resetGoogleSignInBusy();
+      }
+    })();
   };
 
   const buyGemPackage = async (packageId) => {
@@ -1929,9 +2105,14 @@ export default function App() {
               {!user.email && (
                 <div className="glass guest-notice">
                   <p>You are playing as a <b>Guest</b>. Account linking will preserve progress across devices when OAuth is enabled.</p>
-                  <button className="btn-primary google-button" onClick={handleGoogleLogin}>
+                  <button
+                    className="btn-primary google-button"
+                    onClick={handleGoogleLogin}
+                    disabled={googleSignInPending}
+                    aria-busy={googleSignInPending}
+                  >
                     <img src="https://www.google.com/favicon.ico" alt="" />
-                    Sign in with Google
+                    {googleSignInPending ? 'Signing in…' : 'Sign in with Google'}
                   </button>
                 </div>
               )}

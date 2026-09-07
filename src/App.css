@@ -518,6 +518,11 @@
   height: 16px;
 }
 
+.google-button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
 .profile-header {
   display: grid;
   grid-template-columns: 88px 1fr;

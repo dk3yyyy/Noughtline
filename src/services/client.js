@@ -76,6 +76,22 @@ export function clearSession() {
   if (socket) socket.disconnect();
 }
 
+/**
+ * Swap the local session to a different account's token without bootstrapping
+ * a guest. Used when Google account linking returns switched:true: the server
+ * revoked the current (fresh) guest and issued the already-linked account's
+ * token, so the app must adopt it and reconnect the socket under the new
+ * identity. Mirrors the token/socket handling in ensureSession().
+ */
+export function adoptSessionToken(token) {
+  localStorage.setItem(TOKEN_KEY, token);
+  localStorage.removeItem(LEGACY_TOKEN_KEY);
+  const activeSocket = getSocket();
+  if (activeSocket.connected) activeSocket.disconnect();
+  activeSocket.auth = { token };
+  if (!activeSocket.connected) activeSocket.connect();
+}
+
 export async function logoutSession() {
   try {
     // Revoke the current session server-side (bearer token auto-attached).
