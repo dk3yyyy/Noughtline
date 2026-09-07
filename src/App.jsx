@@ -1372,6 +1372,9 @@ export default function App() {
   // completion effect can re-baseline after each settled series without
   // re-render loops. Null unless a reward-eligible match is in progress.
   const rankedBaselineRef = useRef(null);
+  // Monotonic token so an in-flight /api/me settlement fetch from an older
+  // completion can never overwrite the delta/baseline of a newer one.
+  const ratingSettleSeqRef = useRef(0);
   // Match-complete rating delta for the GAME completion chip ({ delta,
   // label, gained } | null). Null/empty label renders no chip.
   const [ratingChange, setRatingChange] = useState(null);
@@ -1768,6 +1771,12 @@ export default function App() {
   // show the delta next to the outcome. The baseline ref is advanced to the
   // settled rating so a rematch series measures from this result, not from the
   // original room entry. Forfeits never adjust ratings, so they are skipped.
+  //
+  // The settle fetch is intentionally NOT canceled when the player rematches
+  // (status leaving 'complete'): the baseline must still advance, or the next
+  // series' delta would be measured against the pre-previous rating. A
+  // monotonic sequence token discards responses from superseded completions,
+  // and the identity guard drops responses that arrive after a logout/switch.
   useEffect(() => {
     if (gameConfig.mode !== 'multiplayer' || gameStatus !== 'complete') return undefined;
     if (!isRankedRoom(gameConfig.roomSnapshot)) return undefined;
@@ -1776,12 +1785,17 @@ export default function App() {
     const uid = userIdRef.current;
     if (!uid) return undefined;
 
-    let alive = true;
+    // Fresh completion: clear any chip left over from a previous series, then
+    // fetch the settled rating.
+    setRatingChange(null);
+    const seq = ratingSettleSeqRef.current + 1;
+    ratingSettleSeqRef.current = seq;
     api.get('/api/me')
       .then((res) => {
-        if (!alive || userIdRef.current !== uid) return;
+        if (userIdRef.current !== uid) return;
         const next = res.data && res.data.rating;
         if (typeof next !== 'number' || !Number.isFinite(next)) return;
+        if (ratingSettleSeqRef.current !== seq) return;
         const baseline = rankedBaselineRef.current;
         setRatingChange({
           delta: ratingDelta(baseline, next),
@@ -1791,8 +1805,7 @@ export default function App() {
         rankedBaselineRef.current = next;
         userRatingRef.current = next;
       })
-      .catch(() => { if (alive) setRatingChange(null); });
-    return () => { alive = false; };
+      .catch(() => {});
   }, [gameStatus, gameConfig.mode, gameConfig.roomSnapshot, completionReason]);
 
   // Modal Handlers
