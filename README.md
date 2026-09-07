@@ -54,8 +54,8 @@ Change rewards in the server settlement policy, not in the React client.
 Requirements: Node.js 22+ and npm.
 
 ```bash
-git clone https://github.com/dk3yyyy/tic_tac.git
-cd tic_tac
+git clone https://github.com/dk3yyyy/Noughtline.git
+cd Noughtline
 npm ci
 npm ci --prefix server
 cp server/.env.example server/.env
