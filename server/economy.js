@@ -11,7 +11,14 @@ function packageById(id) {
   return GEM_PACKAGES.find((item) => item.id === id);
 }
 
-function createEconomy({ db, config, fetchImpl = global.fetch }) {
+// Failed payment intents stay retry-worthy for this long after creation. On
+// the Paystack callback return the client-side verify may race provider
+// finalization (the webhook has not arrived yet), so a recent failure is worth
+// surfacing for another verify attempt — verify is idempotent and credits
+// exactly once. Older failures are abandoned checkouts and stay buried.
+const PENDING_PAYMENT_RETRY_WINDOW_MS = 30 * 60 * 1000;
+
+function createEconomy({ db, config, fetchImpl = global.fetch, now = () => Date.now() }) {
   const changeBalance = db.transaction(({ userId, currency, amount, reason, reference, metadata = {} }) => {
     if (!['coins', 'gems'].includes(currency) || !Number.isSafeInteger(amount) || amount === 0) {
       throw new Error('Invalid ledger entry');
@@ -86,6 +93,37 @@ function createEconomy({ db, config, fetchImpl = global.fetch }) {
     return { reference: payload.data.reference, authorizationUrl: payload.data.authorization_url };
   }
 
+  // Resume support for the Paystack checkout. Returns the most recent intent
+  // this user has not been credited for when a client-side verification attempt
+  // still makes sense, otherwise null. See PENDING_PAYMENT_RETRY_WINDOW_MS.
+  function getPendingPayment(userId) {
+    const intent = db.prepare(`
+      SELECT reference, package_id, gems, amount_ngn, status, created_at
+      FROM payment_intents
+      WHERE user_id = ? AND status != 'credited'
+      ORDER BY created_at DESC LIMIT 1
+    `).get(userId);
+    if (!intent) return null;
+    if (intent.status === 'failed') {
+      // Only recent failures are retry-worthy (see the window constant above).
+      const rawCreatedAt = String(intent.created_at || '');
+      const isoCreatedAt = rawCreatedAt.includes('T')
+        ? rawCreatedAt
+        : `${rawCreatedAt.replace(' ', 'T')}Z`;
+      const createdMs = Date.parse(isoCreatedAt);
+      if (!Number.isFinite(createdMs) || now() - createdMs > PENDING_PAYMENT_RETRY_WINDOW_MS) {
+        return null;
+      }
+    }
+    return {
+      reference: intent.reference,
+      packageId: intent.package_id,
+      gems: intent.gems,
+      amountNgn: intent.amount_ngn,
+      createdAt: intent.created_at,
+    };
+  }
+
   async function verifyAndCreditPayment(reference) {
     if (!config.paystackSecretKey) throw Object.assign(new Error('Payments are not configured'), { status: 503 });
     const intent = db.prepare('SELECT * FROM payment_intents WHERE reference = ?').get(reference);
@@ -124,7 +162,7 @@ function createEconomy({ db, config, fetchImpl = global.fetch }) {
     })();
   }
 
-  return { changeBalance, buyAvatar, initializePayment, verifyAndCreditPayment };
+  return { changeBalance, buyAvatar, initializePayment, getPendingPayment, verifyAndCreditPayment };
 }
 
 module.exports = { GEM_PACKAGES, createEconomy };

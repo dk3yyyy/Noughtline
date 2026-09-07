@@ -4,6 +4,7 @@ import { clearActiveRoom, createInviteUrl, getInviteRoomId, normalizeRoomId, rea
 import { mergeToast } from './services/toasts';
 import { dateText, friendlyLedgerReason, outcomeFor, scoreText, signedAmount } from './services/history';
 import { canClaimQuest, DAILY_REWARD, dailyRewardCopy, questComplete, questProgressLabel, rewardLabel } from './services/quests';
+import { parsePaymentComplete, providerReturnState } from './services/payments';
 import { GOOGLE_CLIENT_ID } from './config';
 import { buildGoogleIdConfig, loadGsiScript, normalizeGoogleError, parseProviderResponse, signInAvailability } from './services/google';
 import {
@@ -1437,6 +1438,57 @@ export default function App() {
       })
       .catch((error) => console.error('Session bootstrap failed', error));
   }, [fetchUserData]);
+
+  // Resume an interrupted Paystack purchase: the buy-gems flow redirects to
+  // the provider and back to /?payment=complete, but nothing ever verifies the
+  // payment or refreshes gems. On that return, ask the server which intent is
+  // still uncredited (GET /api/economy/payments/pending), verify it — the
+  // server-side verify is idempotent and credits exactly once — then refresh
+  // the profile so the new gems appear. The query marker is stripped
+  // synchronously BEFORE any async work, so a page refresh or React
+  // StrictMode's dev remount can never re-run verification for the same
+  // return. Gated on user.id so the bearer token exists before the lookup.
+  useEffect(() => {
+    if (user.id == null) return undefined;
+    const uid = user.id;
+    const returnSearch = window.location.search;
+    if (!parsePaymentComplete(returnSearch)) return undefined;
+
+    const params = new URLSearchParams(returnSearch);
+    params.delete('payment');
+    const remaining = params.toString();
+    window.history.replaceState(null, '', window.location.pathname + (remaining ? `?${remaining}` : '') + window.location.hash);
+
+    let canceled = false;
+    (async () => {
+      try {
+        const { data: pending } = await api.get('/api/economy/payments/pending');
+        if (canceled || userIdRef.current !== uid) return;
+        const state = providerReturnState(returnSearch, pending?.pending === true);
+        if (state !== 'verifying') {
+          // Returned from Paystack but this account has nothing to verify:
+          // either the webhook already credited the gems or the guest never
+          // started a purchase. Fetching fresh data already happened at boot.
+          notify('No pending payment found for this account — your gems may already have been added.', 'info');
+          return;
+        }
+        try {
+          const { data: result } = await api.post(`/api/economy/payments/${encodeURIComponent(pending.reference)}/verify`);
+          if (canceled || userIdRef.current !== uid) return;
+          const added = Number(result?.gemsAdded) || 0;
+          notify(added > 0 ? `${added} gems added to your balance!` : 'Gems added to your balance!', 'success');
+          await fetchUserData();
+        } catch {
+          if (canceled || userIdRef.current !== uid) return;
+          notify(`Payment is still processing — your gems will appear once confirmed. If it does not arrive, contact support with reference ${pending.reference}.`, 'info');
+        }
+      } catch {
+        if (canceled || userIdRef.current !== uid) return;
+        notify('Could not check your payment right now. Refresh the page in a moment to confirm your gems.', 'info');
+      }
+    })();
+    return () => { canceled = true; };
+  }, [user.id, fetchUserData, notify]);
 
   // Fetch shop items on mount
   useEffect(() => {

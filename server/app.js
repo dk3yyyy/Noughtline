@@ -347,6 +347,14 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
       return res.json(await economy.verifyAndCreditPayment(req.params.reference));
     } catch (error) { return next(error); }
   });
+  // Resume hook for the Paystack checkout: after the provider redirects the
+  // buyer back to /?payment=complete the client asks which intent still needs
+  // verification (pending, or failed < 30 min ago while the webhook races).
+  app.get('/api/economy/payments/pending', auth.requireAuth, (req, res) => {
+    const pending = economy.getPendingPayment(req.user.id);
+    if (!pending) return res.json({ pending: false });
+    return res.json({ pending: true, ...pending });
+  });
 
   const questError = (error, res, next) => {
     if (error && error.code) return res.status(error.status || 409).json({ error: error.message, code: error.code });
