@@ -21,6 +21,7 @@ function loadConfig(overrides = {}) {
       .map((value) => value.trim())
       .filter(Boolean),
     paystackSecretKey: overrides.paystackSecretKey ?? process.env.PAYSTACK_SECRET_KEY ?? '',
+    googleClientId: overrides.googleClientId ?? process.env.GOOGLE_CLIENT_ID ?? '',
     publicAppUrl: overrides.publicAppUrl || process.env.PUBLIC_APP_URL || deploymentUrl,
     roomActionRateLimit: Number(overrides.roomActionRateLimit || process.env.ROOM_ACTION_RATE_LIMIT || 30),
     roomActionRateWindowMs: Number(overrides.roomActionRateWindowMs || process.env.ROOM_ACTION_RATE_WINDOW_MS || 60_000),

@@ -44,3 +44,39 @@ test('prototype SQLite data migrates in place without losing users', () => {
   assert.ok(columns.includes('cost_coins'));
   db.close();
 });
+
+test('migration adds the google account linking column and unique index to legacy schemas', () => {
+  const db = new Database(':memory:');
+  db.exec(`
+    CREATE TABLE users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      uuid TEXT UNIQUE,
+      username TEXT UNIQUE,
+      avatar TEXT,
+      xp INTEGER DEFAULT 0,
+      level INTEGER DEFAULT 1,
+      coins REAL DEFAULT 0,
+      wins INTEGER DEFAULT 0,
+      losses INTEGER DEFAULT 0,
+      draws INTEGER DEFAULT 0,
+      streak INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    INSERT INTO users (uuid, username) VALUES ('legacy-1', 'Legacy_One');
+    INSERT INTO users (uuid, username) VALUES ('legacy-2', 'Legacy_Two');
+  `);
+
+  initDb(db);
+  const columns = db.prepare('PRAGMA table_info(users)').all().map((column) => column.name);
+  assert.ok(columns.includes('email_verified'));
+  assert.ok(columns.includes('google_id'));
+  assert.equal(db.prepare('SELECT email_verified FROM users WHERE username = ?').get('Legacy_One').email_verified, 0);
+  assert.ok(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = 'idx_users_google_id'").get());
+
+  db.prepare('UPDATE users SET google_id = ? WHERE username = ?').run('google-sub-1', 'Legacy_One');
+  assert.throws(
+    () => db.prepare('UPDATE users SET google_id = ? WHERE username = ?').run('google-sub-1', 'Legacy_Two'),
+    (error) => error.code === 'SQLITE_CONSTRAINT_UNIQUE' && /users\.google_id/.test(error.message),
+  );
+  db.close();
+});

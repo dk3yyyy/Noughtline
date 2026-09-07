@@ -10,6 +10,7 @@ const { Server } = require('socket.io');
 const { createDatabase, createGuest, publicUser } = require('./database');
 const { createAuth } = require('./auth');
 const { createEconomy, GEM_PACKAGES } = require('./economy');
+const { createGoogleAuth } = require('./googleAuth');
 const { RoomManager } = require('./game/roomManager');
 const { Matchmaker } = require('./game/matchmaker');
 const { ActionRateLimiter } = require('./game/actionRateLimiter');
@@ -41,11 +42,12 @@ function randomRoomId(prefix = '') {
   return `${prefix}${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
 }
 
-function createRuntime({ config, database, fetchImpl, startTimers = true } = {}) {
+function createRuntime({ config, database, fetchImpl, startTimers = true, googleAuth: googleAuthOption } = {}) {
   if (!config) throw new Error('config is required');
   const db = database || createDatabase(config.databasePath);
   const auth = createAuth({ db, config });
   const economy = createEconomy({ db, config, fetchImpl });
+  const googleAuth = googleAuthOption || createGoogleAuth({ config, fetchImpl });
 
   const settleSeries = (room, roundHistory) => db.transaction(() => {
     const playerX = room.players.find((player) => player.symbol === 'X');
@@ -118,9 +120,18 @@ function createRuntime({ config, database, fetchImpl, startTimers = true } = {})
   });
 
   app.disable('x-powered-by');
+  const cspDirectives = { imgSrc: ["'self'", 'data:', 'https:'] };
+  if (config.googleClientId) {
+    // Google Identity Services loads its client script and renders its sign-in
+    // button/iframe from accounts.google.com; the default script-src 'self'
+    // would otherwise block the entire flow in production.
+    cspDirectives.scriptSrc = ["'self'", 'https://accounts.google.com'];
+    cspDirectives.frameSrc = ["'self'", 'https://accounts.google.com'];
+    cspDirectives.connectSrc = ["'self'", 'https://accounts.google.com'];
+  }
   app.use(helmet({
     crossOriginResourcePolicy: false,
-    contentSecurityPolicy: { directives: { imgSrc: ["'self'", 'data:', 'https:'] } },
+    contentSecurityPolicy: { directives: cspDirectives },
   }));
   app.use(cors({ origin: config.corsOrigins }));
 
@@ -164,6 +175,90 @@ function createRuntime({ config, database, fetchImpl, startTimers = true } = {})
       if (socket.user?.id === req.user.id) socket.disconnect(true);
     }
     res.json({ success: true });
+  });
+
+  app.get('/api/auth/providers', (_req, res) => {
+    res.json({ google: { configured: googleAuth.isConfigured() } });
+  });
+
+  app.post('/api/auth/google/nonce', auth.requireAuth, (req, res) => {
+    res.json({ nonce: googleAuth.issueNonce(req.user.id), expiresInMs: googleAuth.nonceTtlMs });
+  });
+
+  app.post('/api/auth/google', auth.requireAuth, async (req, res, next) => {
+    if (!googleAuth.isConfigured()) {
+      return res.status(503).json({ error: 'Google sign-in is not configured', code: 'GOOGLE_NOT_CONFIGURED' });
+    }
+    const { idToken, nonce } = req.body || {};
+    if (typeof idToken !== 'string' || !idToken) {
+      return res.status(401).json({ error: 'Google sign-in could not be verified', code: 'GOOGLE_VERIFY_FAILED' });
+    }
+    if (typeof nonce !== 'string' || !googleAuth.consumeNonce(nonce, req.user.id)) {
+      return res.status(401).json({ error: 'Invalid or expired nonce', code: 'INVALID_NONCE' });
+    }
+    let payload;
+    try {
+      payload = await googleAuth.verifyIdToken({ idToken, nonce });
+    } catch {
+      return res.status(401).json({ error: 'Google sign-in could not be verified', code: 'GOOGLE_VERIFY_FAILED' });
+    }
+
+    let outcome;
+    try {
+      outcome = db.transaction(() => {
+        const claimedUser = db.prepare('SELECT * FROM users WHERE google_id = ?').get(String(payload.sub));
+        if (claimedUser) {
+          if (claimedUser.id === req.user.id) {
+            // Idempotent relink: the caller already owns this Google account.
+            return { token: auth.signUser(claimedUser), user: publicUser(claimedUser), linked: true, switched: false };
+          }
+          const played = db.prepare('SELECT 1 FROM series_results WHERE player_x_id = ? OR player_o_id = ? LIMIT 1')
+            .get(req.user.id, req.user.id);
+          // A guest is only switchable when there is nothing to preserve. Series
+          // results, XP, ledger history, or paid (non-starter) avatars all count
+          // as progress. Starter avatars granted at guest creation do NOT count.
+          const hasLedger = db.prepare('SELECT 1 FROM currency_ledger WHERE user_id = ? LIMIT 1').get(req.user.id);
+          const hasPaidAvatar = db.prepare(`
+            SELECT 1 FROM user_avatars ua
+            JOIN avatars a ON a.id = ua.avatar_id
+            WHERE ua.user_id = ? AND NOT (a.cost_gems = 0 AND a.cost_coins = 0)
+            LIMIT 1
+          `).get(req.user.id);
+          const isFresh = !played && (req.user.xp || 0) === 0 && !hasLedger && !hasPaidAvatar;
+          if (!isFresh) {
+            throw Object.assign(new Error('This Google account is linked to another player with saved progress. Export your data from the current guest first.'), { code: 'GOOGLE_LINK_CONFLICT', status: 409 });
+          }
+          // Fresh guests have nothing to preserve: revoke the guest session and
+          // switch to the account that owns the Google identity.
+          db.prepare('UPDATE users SET session_version = session_version + 1 WHERE id = ?').run(req.user.id);
+          return { token: auth.signUser(claimedUser), user: publicUser(claimedUser), linked: true, switched: true };
+        }
+        // Unclaimed: bind the verified Google identity to the current guest.
+        try {
+          db.prepare('UPDATE users SET google_id = ?, email = ?, email_verified = 1 WHERE id = ?')
+            .run(String(payload.sub), payload.email, req.user.id);
+        } catch (error) {
+          if (error && error.code === 'SQLITE_CONSTRAINT_UNIQUE' && /users\.email/.test(error.message)) {
+            throw Object.assign(new Error('That email is already linked to another account'), { code: 'EMAIL_ALREADY_LINKED', status: 409 });
+          }
+          throw error;
+        }
+        const updated = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+        return { token: auth.signUser(updated), user: publicUser(updated), linked: true, switched: false };
+      })();
+    } catch (error) {
+      if (error.status === 409) return res.status(409).json({ error: error.message, code: error.code });
+      return next(error);
+    }
+
+    if (outcome.switched) {
+      // Socket authority is only checked at connect time, so the revoked guest's
+      // live sockets must be dropped too (mirrors the logout endpoint).
+      for (const socket of io.sockets.sockets.values()) {
+        if (socket.user?.id === req.user.id) socket.disconnect(true);
+      }
+    }
+    return res.json(outcome);
   });
 
   app.get('/api/me', auth.requireAuth, (req, res) => res.json(publicUser(req.user)));
@@ -411,6 +506,7 @@ function createRuntime({ config, database, fetchImpl, startTimers = true } = {})
       for (const player of matchmaker.expiredPlayers(15_000)) io.to(player.socketId).emit('match_fallback_ai');
       for (const result of roomManager.resolveDisconnectTimeouts()) io.to(result.roomId).emit('room_update', result.room);
       roomActionLimiter.prune();
+      googleAuth.pruneNonces();
       roomManager.removeExpired();
     }, 1000));
   }
@@ -420,7 +516,7 @@ function createRuntime({ config, database, fetchImpl, startTimers = true } = {})
     return new Promise((resolve) => io.close(() => server.close(() => { db.close(); resolve(); })));
   }
 
-  return { app, server, io, db, auth, economy, roomManager, matchmaker, close };
+  return { app, server, io, db, auth, economy, googleAuth, roomManager, matchmaker, close };
 }
 
 module.exports = { createRuntime };
