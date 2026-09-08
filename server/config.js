@@ -25,6 +25,8 @@ function loadConfig(overrides = {}) {
     publicAppUrl: overrides.publicAppUrl || process.env.PUBLIC_APP_URL || deploymentUrl,
     roomActionRateLimit: Number(overrides.roomActionRateLimit || process.env.ROOM_ACTION_RATE_LIMIT || 30),
     roomActionRateWindowMs: Number(overrides.roomActionRateWindowMs || process.env.ROOM_ACTION_RATE_WINDOW_MS || 60_000),
+    chatRateLimit: Number(overrides.chatRateLimit || process.env.CHAT_RATE_LIMIT || 12),
+    chatRateWindowMs: Number(overrides.chatRateWindowMs || process.env.CHAT_RATE_WINDOW_MS || 30_000),
   };
 }
 
