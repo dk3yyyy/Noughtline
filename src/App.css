@@ -1237,6 +1237,135 @@
   justify-self: end;
 }
 
+/* --- PROFILE Achievements card (lifetime milestones) --- */
+
+.achievements-card {
+  margin-top: 28px;
+  padding: 18px;
+  border-radius: 12px;
+}
+
+.achievements-head {
+  margin-bottom: 14px;
+}
+
+.achievements-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.achievement-tile {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  transition: border-color 160ms ease, background-color 160ms ease, opacity 160ms ease;
+}
+
+.achievement-tile-head {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.achievement-tile-icon {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface-strong);
+  color: var(--text-muted);
+}
+
+.achievement-tile-title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-main);
+  font-size: 0.86rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.achievement-tile-desc {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  line-height: 1.45;
+}
+
+.achievement-tile-foot {
+  margin-top: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.achievement-claim-btn {
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: 8px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.achievement-locked {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* Eligible: claimable now — teal ring + tinted surface to stand out. */
+.achievement-tile.is-eligible {
+  border-color: rgba(73, 214, 180, 0.42);
+  background: color-mix(in srgb, var(--success) 5%, var(--surface));
+}
+
+.achievement-tile.is-eligible .achievement-tile-icon {
+  border-color: rgba(73, 214, 180, 0.4);
+  color: var(--success);
+}
+
+/* Claimed: muted content + a soft done ring; the Claimed badge reads clearly. */
+.achievement-tile.is-claimed {
+  border-color: rgba(73, 214, 180, 0.26);
+}
+
+.achievement-tile.is-claimed .achievement-tile-icon,
+.achievement-tile.is-claimed .achievement-tile-title {
+  color: var(--text-secondary);
+}
+
+/* Locked: not unlocked yet — quiet and slightly faded. */
+.achievement-tile.is-locked {
+  opacity: 0.62;
+}
+
+.achievement-tile.is-locked .achievement-tile-icon {
+  color: var(--text-muted);
+}
+
 .btn-teal,
 .btn-pink,
 .btn-orange,

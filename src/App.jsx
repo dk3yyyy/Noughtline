@@ -4,6 +4,7 @@ import { clearActiveRoom, createInviteUrl, getInviteRoomId, normalizeRoomId, rea
 import { mergeToast } from './services/toasts';
 import { dateText, friendlyLedgerReason, outcomeFor, scoreText, signedAmount } from './services/history';
 import { canClaimQuest, DAILY_REWARD, dailyRewardCopy, questComplete, questProgressLabel, rewardLabel } from './services/quests';
+import { achievementIconKey, claimButtonLabel, tileStateClass } from './services/achievements';
 import { parsePaymentComplete, providerReturnState } from './services/payments';
 import { deltaLabel, formatRating, isRankedRoom, ratingDelta } from './services/ratings';
 import { GOOGLE_CLIENT_ID } from './config';
@@ -29,9 +30,13 @@ import {
   RotateCcw,
   Check,
   Copy,
+  Crown,
   Link2,
+  Lock,
   Share2,
   AlertTriangle,
+  Award,
+  Target,
   Wallet,
   Gift,
   Gauge,
@@ -527,6 +532,171 @@ const QuestCard = ({ userId, notify, onBalanceChange }) => {
             </ul>
           )}
         </div>
+      )}
+    </div>
+  );
+};
+
+// --- PROFILE Achievements card (lifetime milestones) ---
+
+// Tile icon map keyed by the pure achievementIconKey() helper's output;
+// the server catalog may grow new ids, which all fall back to 'trophy'.
+const ACHIEVEMENT_ICONS = {
+  trophy: Trophy,
+  award: Award,
+  flame: Flame,
+  target: Target,
+  crown: Crown,
+  bag: ShoppingBag,
+};
+
+// Mirrors QuestCard's fetch/abort/identity-guard pattern: achievements are
+// loaded once per PROFILE activation / identity change, and the server
+// stamps Cache-Control: no-store because claim state is personal. Claiming
+// re-fetches the list and asks the parent to refresh balances.
+const AchievementsCard = ({ userId, notify, onBalanceChange }) => {
+  // Identity captured at request start; responses from a previous guest must
+  // never populate the next guest's achievement state.
+  const uidRef = useRef(userId);
+  useEffect(() => { uidRef.current = userId; }, [userId]);
+  const activeRequestRef = useRef(null);
+
+  const [achievements, setAchievements] = useState([]);
+  const [achievementsLoading, setAchievementsLoading] = useState(false);
+  const [achievementsError, setAchievementsError] = useState('');
+  const [claimingId, setClaimingId] = useState(null);
+
+  const loadAchievements = useCallback(async (signal) => {
+    const uid = uidRef.current;
+    if (!uid) return;
+    if (!signal) {
+      // Manual retry/refresh: supersede any in-flight GET.
+      if (activeRequestRef.current) activeRequestRef.current.abort();
+      const controller = new AbortController();
+      activeRequestRef.current = controller;
+      signal = controller.signal;
+    }
+    setAchievementsLoading(true);
+    setAchievementsError('');
+    try {
+      const { data } = await api.get('/api/achievements', { signal });
+      if (signal.aborted || uidRef.current !== uid) return;
+      setAchievements(Array.isArray(data.achievements) ? data.achievements : []);
+    } catch (error) {
+      if (error?.code === 'ERR_CANCELED' || signal.aborted || uidRef.current !== uid) return;
+      setAchievementsError('Could not load achievements. Check your connection and try again.');
+    } finally {
+      if (!signal.aborted && uidRef.current === uid) setAchievementsLoading(false);
+    }
+  }, []);
+
+  // Load once per PROFILE activation / identity. The cleanup aborts the
+  // in-flight GET when the card unmounts (view change) or userId changes.
+  useEffect(() => {
+    if (!userId) return;
+    setAchievements([]);
+    setAchievementsError('');
+    setClaimingId(null);
+    const controller = new AbortController();
+    activeRequestRef.current = controller;
+    loadAchievements(controller.signal);
+    return () => {
+      controller.abort();
+      // A manual refresh (claim/retry) may have superseded this controller;
+      // abort that too so nothing settles state after the card unmounts.
+      if (activeRequestRef.current && activeRequestRef.current !== controller) activeRequestRef.current.abort();
+    };
+  }, [userId, loadAchievements]);
+
+  const claimAchievement = async (achievementId) => {
+    if (claimingId || !uidRef.current) return;
+    const uid = uidRef.current;
+    setClaimingId(achievementId);
+    try {
+      const { data } = await api.post(`/api/achievements/${achievementId}/claim`);
+      if (uidRef.current !== uid) return;
+      notify(`Reward claimed: ${rewardLabel(data && data.reward)}`, 'success');
+      await Promise.all([loadAchievements(), onBalanceChange && onBalanceChange()]);
+    } catch (error) {
+      if (uidRef.current !== uid) return;
+      const code = error?.response?.data?.code;
+      if (code === 'ACHIEVEMENT_ALREADY_CLAIMED') {
+        notify('Achievement reward already claimed.', 'info');
+        await loadAchievements();
+      } else if (code === 'ACHIEVEMENT_INCOMPLETE') {
+        notify('Achievement not unlocked yet — keep playing!', 'error');
+      } else if (code === 'UNKNOWN_ACHIEVEMENT') {
+        notify('Achievement not found. Try again later.', 'error');
+      } else {
+        notify('Could not claim the achievement reward. Try again.', 'error');
+      }
+    } finally {
+      if (uidRef.current === uid) setClaimingId(null);
+    }
+  };
+
+  const showContent = achievements.length > 0 && !achievementsError;
+
+  return (
+    <div className="achievements-card glass">
+      <div className="activity-head achievements-head">
+        <h3 className="activity-title">Achievements</h3>
+      </div>
+
+      {achievementsError ? (
+        <div className="activity-state" role="alert">
+          <AlertTriangle size={18} className="activity-state-icon" />
+          <p>{achievementsError}</p>
+          <button type="button" className="btn-gray activity-retry" onClick={() => loadAchievements()}>Try again</button>
+        </div>
+      ) : achievementsLoading && !showContent ? (
+        <p className="activity-state" role="status">Loading achievements…</p>
+      ) : achievements.length === 0 ? (
+        <p className="activity-empty">No achievements yet — play more multiplayer to unlock your first one!</p>
+      ) : (
+        <ul className="achievements-grid" aria-label="Achievements">
+          {achievements.map(achievement => {
+            const state = tileStateClass(achievement);
+            const Icon = ACHIEVEMENT_ICONS[achievementIconKey(achievement && achievement.id)] || Trophy;
+            const claiming = claimingId === achievement.id;
+            const showClaim = claimButtonLabel(achievement);
+            return (
+              <li key={achievement && achievement.id} className={`achievement-tile is-${state}`}>
+                <div className="achievement-tile-head">
+                  <span className="achievement-tile-icon" aria-hidden="true">
+                    <Icon size={20} />
+                  </span>
+                  <span className="achievement-tile-title">{achievement.title || achievement.id}</span>
+                </div>
+                {achievement.description && (
+                  <p className="achievement-tile-desc">{achievement.description}</p>
+                )}
+                <div className="achievement-tile-foot">
+                  <QuestRewardChip reward={achievement.reward} />
+                  {state === 'claimed' ? (
+                    <QuestClaimedButton />
+                  ) : showClaim ? (
+                    <button
+                      type="button"
+                      className="btn-teal achievement-claim-btn"
+                      onClick={() => claimAchievement(achievement.id)}
+                      disabled={claiming}
+                      aria-busy={claiming}
+                      aria-label={`Claim ${rewardLabel(achievement.reward)}`}
+                    >
+                      {claiming ? 'Claiming…' : 'Claim'}
+                    </button>
+                  ) : (
+                    <span className="achievement-locked">
+                      <Lock size={12} aria-hidden="true" />
+                      Locked
+                    </span>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
       )}
     </div>
   );
@@ -2600,6 +2770,8 @@ export default function App() {
               </div>
 
               <QuestCard userId={user.id} notify={notify} onBalanceChange={fetchUserData} />
+
+              <AchievementsCard userId={user.id} notify={notify} onBalanceChange={fetchUserData} />
 
               <h3 className="collection-title">My Collection</h3>
               <div className="inventory-grid">
