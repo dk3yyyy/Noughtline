@@ -17,6 +17,7 @@ import {
   matchOpponent,
   matchStatusLabel,
   myMatchId,
+  nextMatchForPlayer,
   myTournamentReward,
   roundLabel,
   tournamentStatusLabel,
@@ -1984,7 +1985,7 @@ const TournamentsScreen = ({ userId, notify, onEnterMatch, onExit }) => {
     }
   };
 
-  const myMatchRow = flatMatches.find((matchRow) => matchRow.id === myMatchId(flatMatches, userId)) || null;
+  const myMatchRow = nextMatchForPlayer(flatMatches, userId);
   const myMatchReady = canEnterMatch({ tournamentStatus, match: myMatchRow, userId });
   const myOpponent = myMatchRow && matchOpponent(myMatchRow, userId);
   const myEnterId = myMatchRow ? myMatchRow.id : null;
