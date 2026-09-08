@@ -1700,6 +1700,41 @@
   font-size: 0.72rem;
 }
 
+.theme-seg {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-strong);
+}
+
+.theme-seg-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.theme-seg-btn:hover {
+  color: var(--text-secondary);
+}
+
+.theme-seg-btn.is-active {
+  background: var(--accent-purple-soft);
+  color: var(--text-main);
+}
+
 .toggle-switch {
   width: 46px;
   min-height: 26px;

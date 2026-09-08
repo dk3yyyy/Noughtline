@@ -23,6 +23,7 @@ import {
   tournamentStatusLabel,
 } from './services/tournaments';
 import { deltaLabel, formatRating, isRankedRoom, ratingDelta } from './services/ratings';
+import { normalizeThemePreference, resolveTheme } from './services/theme';
 import { GOOGLE_CLIENT_ID } from './config';
 import { buildGoogleIdConfig, loadGsiScript, normalizeGoogleError, parseProviderResponse, signInAvailability } from './services/google';
 import {
@@ -42,6 +43,7 @@ import {
   VolumeX,
   Moon,
   Sun,
+  Monitor,
   Shield,
   RotateCcw,
   Check,
@@ -153,15 +155,27 @@ const SettingsModal = ({ show, onClose, config, setConfig, onExport, onDelete, o
         {/* Settings Content Restored */}
         <div className="setting-row">
           <div className="setting-label">
-            {config.theme === 'dark' ? <Moon size={20} /> : <Sun size={20} />}
+            {config.theme === 'dark' ? <Moon size={20} /> : config.theme === 'light' ? <Sun size={20} /> : <Monitor size={20} />}
             <span>Theme</span>
           </div>
-          <button
-            className="toggle-pill"
-            onClick={() => setConfig(p => ({ ...p, theme: p.theme === 'dark' ? 'light' : 'dark' }))}
-          >
-            {config.theme === 'dark' ? 'Dark Mode' : 'Light Mode'}
-          </button>
+          <div className="theme-seg" role="group" aria-label="Theme">
+            {[
+              { value: 'system', label: 'System', icon: Monitor },
+              { value: 'light', label: 'Light', icon: Sun },
+              { value: 'dark', label: 'Dark', icon: Moon },
+            ].map((option) => (
+              <button
+                type="button"
+                key={option.value}
+                className={`theme-seg-btn${config.theme === option.value ? ' is-active' : ''}`}
+                aria-pressed={config.theme === option.value}
+                onClick={() => setConfig(p => ({ ...p, theme: option.value }))}
+              >
+                <option.icon size={15} />
+                {option.label}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="setting-row">
           <div className="setting-label">
@@ -2310,7 +2324,15 @@ export default function App() {
   // Persisted state
   const [userConfig, setUserConfig] = useState(() => {
     const saved = localStorage.getItem('noughtline_config') || localStorage.getItem('plaything_config');
-    return saved ? JSON.parse(saved) : { theme: 'dark', sound: true };
+    if (!saved) return { theme: 'system', sound: true };
+    const parsed = JSON.parse(saved);
+    // Pre-v2 configs defaulted to dark with no way to tell a manual choice from
+    // the old default. One-time migration to System (the new default honors
+    // prefers-color-scheme); the themeV2 flag makes later picks authoritative.
+    if (!parsed.themeV2) {
+      return { ...parsed, theme: 'system', sound: parsed.sound ?? true, themeV2: true };
+    }
+    return { ...parsed, theme: normalizeThemePreference(parsed.theme), sound: parsed.sound ?? true };
   });
 
   const [gameConfig, setGameConfig] = useState({ size: 3, difficulty: 'easy', mode: 'singleplayer', roomId: null });
@@ -2686,10 +2708,30 @@ export default function App() {
   }, [gameStatus]);
 
   useEffect(() => {
-    document.documentElement.setAttribute('data-theme', userConfig.theme);
     localStorage.setItem('noughtline_config', JSON.stringify(userConfig));
     localStorage.removeItem('plaything_config');
   }, [userConfig]);
+
+  // Theme: apply data-theme from the resolved preference. 'system' follows the
+  // OS via prefers-color-scheme and re-applies live when the OS theme changes.
+  useEffect(() => {
+    const preference = normalizeThemePreference(userConfig.theme);
+    const mql = typeof window !== 'undefined' && window.matchMedia
+      ? window.matchMedia('(prefers-color-scheme: dark)')
+      : null;
+    const apply = () => {
+      document.documentElement.setAttribute('data-theme', resolveTheme(preference, mql ? mql.matches : false));
+    };
+    apply();
+    if (preference !== 'system' || !mql) return undefined;
+    const onChange = () => apply();
+    if (typeof mql.addEventListener === 'function') mql.addEventListener('change', onChange);
+    else if (typeof mql.addListener === 'function') mql.addListener(onChange);
+    return () => {
+      if (typeof mql.removeEventListener === 'function') mql.removeEventListener('change', onChange);
+      else if (typeof mql.removeListener === 'function') mql.removeListener(onChange);
+    };
+  }, [userConfig.theme]);
 
 
   useEffect(() => {
