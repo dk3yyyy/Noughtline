@@ -118,8 +118,48 @@ function initDb(db) {
       FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS tournaments (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'in_progress', 'complete', 'cancelled')),
+      size INTEGER NOT NULL CHECK (size IN (8)),
+      created_by INTEGER,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      started_at DATETIME,
+      completed_at DATETIME,
+      FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS tournament_players (
+      tournament_id TEXT NOT NULL,
+      user_id INTEGER NOT NULL,
+      seed INTEGER NOT NULL,
+      joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      position INTEGER,
+      PRIMARY KEY (tournament_id, user_id),
+      FOREIGN KEY (tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS tournament_matches (
+      id TEXT PRIMARY KEY,
+      tournament_id TEXT NOT NULL,
+      round INTEGER NOT NULL,
+      pairing INTEGER NOT NULL,
+      player_x_id INTEGER,
+      player_o_id INTEGER,
+      winner_id INTEGER,
+      room_id TEXT,
+      status TEXT NOT NULL DEFAULT 'waiting' CHECK (status IN ('waiting', 'active', 'complete', 'cancelled')),
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      completed_at DATETIME,
+      FOREIGN KEY (tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE
+    );
+
     CREATE INDEX IF NOT EXISTS idx_ledger_user_created ON currency_ledger(user_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_series_players ON series_results(player_x_id, player_o_id, completed_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_tournament_players_tournament ON tournament_players(tournament_id, seed);
+    CREATE INDEX IF NOT EXISTS idx_tournament_matches_tournament ON tournament_matches(tournament_id, round, pairing);
   `);
 
   // Migration from the prototype schema.
