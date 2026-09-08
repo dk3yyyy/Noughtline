@@ -301,7 +301,7 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
     return res.json(outcome);
   });
 
-  app.get('/api/me', auth.requireAuth, (req, res) => res.json(publicUser(req.user)));
+  app.get('/api/me', auth.requireAuth, (req, res) => res.set('Cache-Control', 'no-store').json(publicUser(req.user)));
   app.get('/api/me/inventory', auth.requireAuth, (req, res) => {
     const items = db.prepare(`
       SELECT a.* FROM avatars a
@@ -387,7 +387,9 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
 
   app.get('/api/quests', auth.requireAuth, (req, res) => {
     const { day, dailyRewardClaimed } = questService.getDailyState(req.user);
-    res.json({ day, dailyRewardClaimed, quests: questService.getQuestsForUser(req.user, day) });
+    // Personal, day-scoped data: never serve a cached copy (a stale quest day
+    // or claim state would be visibly wrong).
+    res.set('Cache-Control', 'no-store').json({ day, dailyRewardClaimed, quests: questService.getQuestsForUser(req.user, day) });
   });
   app.post('/api/quests/daily-claim', auth.requireAuth, (req, res, next) => {
     try {
@@ -401,7 +403,9 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
   });
 
   app.get('/api/achievements', auth.requireAuth, (req, res) => {
-    res.json({ achievements: achievementService.achievementStateFor(req.user) });
+    // Personal claim state: never serve a cached copy (stale claimed flags
+    // would let the UI show claimable achievements twice).
+    res.set('Cache-Control', 'no-store').json({ achievements: achievementService.achievementStateFor(req.user) });
   });
   app.post('/api/achievements/:achievementId/claim', auth.requireAuth, (req, res, next) => {
     try {

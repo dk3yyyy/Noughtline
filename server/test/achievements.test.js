@@ -347,3 +347,46 @@ test('initDb adds users.max_streak with a 0 default for legacy and fresh users',
   assert.equal(fresh.max_streak, 0);
   db.close();
 });
+
+test('initDb backfills max_streak from an existing streak on legacy users', () => {
+  const Database = require('better-sqlite3');
+  const db = new Database(':memory:');
+  db.exec(`
+    CREATE TABLE users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      uuid TEXT UNIQUE,
+      username TEXT UNIQUE NOT NULL,
+      avatar TEXT,
+      xp INTEGER NOT NULL DEFAULT 0,
+      level INTEGER NOT NULL DEFAULT 1,
+      tokens INTEGER NOT NULL DEFAULT 0,
+      gems INTEGER NOT NULL DEFAULT 100,
+      coins INTEGER NOT NULL DEFAULT 0,
+      wins INTEGER NOT NULL DEFAULT 0,
+      losses INTEGER NOT NULL DEFAULT 0,
+      draws INTEGER NOT NULL DEFAULT 0,
+      streak INTEGER NOT NULL DEFAULT 0,
+      session_version INTEGER NOT NULL DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    INSERT INTO users (uuid, username, streak) VALUES ('legacy-streak', 'Legacy_Streak', 4);
+    INSERT INTO users (uuid, username, streak) VALUES ('legacy-zero', 'Legacy_Zero', 0);
+  `);
+  initDb(db);
+  // The player holding a live 4-streak must not lose streak-achievement
+  // eligibility just because the column arrived with a 0 default.
+  assert.equal(db.prepare("SELECT max_streak FROM users WHERE username = 'Legacy_Streak'").get().max_streak, 4);
+  assert.equal(db.prepare("SELECT max_streak FROM users WHERE username = 'Legacy_Zero'").get().max_streak, 0);
+  db.close();
+});
+
+test('personal data endpoints send Cache-Control: no-store', async (t) => {
+  const runtime = createTestRuntime();
+  t.after(() => runtime.db.close());
+  const session = await guest(runtime);
+  for (const path of ['/api/me', '/api/quests', '/api/achievements']) {
+    const response = await request(runtime.app).get(path).set('Authorization', `Bearer ${session.token}`);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers['cache-control'], 'no-store', `${path} must not be cacheable`);
+  }
+});
