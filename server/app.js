@@ -462,6 +462,11 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
   // HTTP entry into a match: guarantees the match room exists (auto-created on
   // first entry, idempotent) and returns the room id the client then
   // socket-emits join_room with. There is deliberately no socket-level enter.
+  app.post('/api/tournaments/:id/cancel', auth.requireAuth, (req, res, next) => {
+    try {
+      res.json(tournamentService.cancel({ tournamentId: req.params.id, userId: req.user.id }));
+    } catch (error) { return codedError(error, res, next); }
+  });
   app.post('/api/tournaments/:id/matches/:matchId/enter', auth.requireAuth, (req, res, next) => {
     try {
       res.json(tournamentService.ensureMatchRoom({ matchId: req.params.matchId, userId: req.user.id }));
