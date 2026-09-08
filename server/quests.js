@@ -11,12 +11,16 @@
 const DAILY_REWARD = Object.freeze({ coins: 50, gems: 10 });
 
 // kind: 'play' quests progress on any played outcome; 'win' quests progress
-// only when the player won the series.
+// only when the player won the series; 'draw' quests progress only when the
+// series ended in a draw (a win never satisfies a draw quest).
 const QUEST_CATALOG = Object.freeze([
+  { id: 'play_1', description: 'Play a multiplayer series', kind: 'play', target: 1, reward: { currency: 'coins', amount: 40 } },
   { id: 'play_3', description: 'Play 3 multiplayer series', kind: 'play', target: 3, reward: { currency: 'coins', amount: 75 } },
+  { id: 'play_5', description: 'Play 5 multiplayer series', kind: 'play', target: 5, reward: { currency: 'gems', amount: 10 } },
   { id: 'win_1', description: 'Win 1 multiplayer series', kind: 'win', target: 1, reward: { currency: 'coins', amount: 50 } },
   { id: 'win_3', description: 'Win 3 multiplayer series', kind: 'win', target: 3, reward: { currency: 'coins', amount: 150 } },
-  { id: 'play_5', description: 'Play 5 multiplayer series', kind: 'play', target: 5, reward: { currency: 'gems', amount: 10 } },
+  { id: 'win_5', description: 'Win 5 multiplayer series', kind: 'win', target: 5, reward: { currency: 'gems', amount: 20 } },
+  { id: 'draw_1', description: 'Draw a multiplayer series', kind: 'draw', target: 1, reward: { currency: 'coins', amount: 30 } },
 ]);
 
 function questById(id) {
@@ -46,9 +50,15 @@ function createQuestService({ db, economy, now = () => Date.now() }) {
     if (typeof day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(day)) {
       throw new Error('Invalid quest day');
     }
-    const progressed = outcome === 'won'
-      ? QUEST_CATALOG
-      : QUEST_CATALOG.filter((quest) => quest.kind === 'play');
+    // Base set: 'play' quests progress on every played outcome. Wins add the
+    // 'win' quests and draws add the 'draw' quests — a win never progresses a
+    // draw quest.
+    const progressed = QUEST_CATALOG.filter((quest) => {
+      if (quest.kind === 'play') return true;
+      if (quest.kind === 'win') return outcome === 'won';
+      if (quest.kind === 'draw') return outcome === 'draw';
+      return false;
+    });
     for (const quest of progressed) bumpProgress.run(userId, quest.id, day);
   });
 
