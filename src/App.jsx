@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { api, adoptSessionToken, clearSession, ensureSession, getSocket, logoutSession } from './services/client';
 import { clearActiveRoom, createInviteUrl, getInviteRoomId, normalizeRoomId, readActiveRoom, saveActiveRoom } from './services/rooms';
 import { chatErrorText, formatChatTime, isOwnMessage, MAX_CHAT_LENGTH, pushChatMessage, validateChatInput } from './services/chat';
+import { httpErrorMessage } from './services/errors';
 import { mergeToast } from './services/toasts';
 import { dateText, friendlyLedgerReason, outcomeFor, scoreText, signedAmount } from './services/history';
 import { canClaimQuest, DAILY_REWARD, dailyRewardCopy, questComplete, questProgressLabel, rewardLabel } from './services/quests';
@@ -1341,7 +1342,7 @@ const useTicTacToe = (gameConfig, setGameConfig, sounds, user) => {
 
       const handleGameError = (error) => {
         setIsActionPending(false);
-        setActionError(typeof error === 'string' ? error : error?.error || 'The game action could not be completed.');
+        setActionError(typeof error === 'string' ? error : httpErrorMessage(error, 'The game action could not be completed.'));
       };
 
       socket.on('room_update', handleRoomUpdate);
@@ -1776,10 +1777,9 @@ const EMPTY_COUNTS = { open: 0, in_progress: 0, complete: 0, cancelled: 0 };
 const fallbackAvatar = (seed) => `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(seed || 'player')}`;
 
 // Coded tournament errors carry a human-readable message already; surface it
-// and only fall back when the response has no body.
-const tournamentHttpError = (error, fallback) => (
-  (error && error.response && error.response.data && error.response.data.error) || fallback
-);
+// (mapped codes get the centralized friendly copy in src/services/errors.js)
+// and only fall back when the response has no readable body.
+const tournamentHttpError = (error, fallback) => httpErrorMessage(error, fallback);
 
 const BracketPlayer = ({ userId, id, username, avatar, winner, loser }) => (
   <div className={`bracket-player${winner ? ' is-winner' : ''}${loser ? ' is-loser' : ''}`}>
@@ -1986,7 +1986,7 @@ const TournamentsScreen = ({ userId, notify, onEnterMatch, onExit }) => {
         // ACTIVE_ROOM_EXISTS / RATE_LIMITED are surfaced by the App-level
         // lifecycle recovery UI; do not double-toast them here.
         if (!['ACTIVE_ROOM_EXISTS', 'RATE_LIMITED'].includes(joinResult.code)) {
-          notify(joinResult.error || 'Could not join the match room.', 'error');
+          notify(httpErrorMessage(joinResult, 'Could not join the match room.'), 'error');
         }
         return;
       }
@@ -3146,7 +3146,7 @@ export default function App() {
       const { data } = await api.post('/api/economy/payments', { packageId });
       window.location.assign(data.authorizationUrl);
     } catch (error) {
-      notify(error.response?.data?.error || 'Payment could not be started', 'error');
+      notify(httpErrorMessage(error, 'Payment could not be started'), 'error');
     }
   };
 
@@ -3156,7 +3156,7 @@ export default function App() {
       await fetchUserData();
       setSelectedShopItem(null);
       notify('Avatar added to collection!', 'success');
-    } catch (error) { notify(error.response?.data?.error || 'Purchase failed', 'error'); }
+    } catch (error) { notify(httpErrorMessage(error, 'Purchase failed'), 'error'); }
   };
 
   const handleExportData = async () => {
@@ -3236,7 +3236,7 @@ export default function App() {
       await api.post('/api/me/equip-avatar', { avatarId });
       await fetchUserData();
       sounds.playClick();
-    } catch (error) { notify(error.response?.data?.error || 'Failed to equip', 'error'); }
+    } catch (error) { notify(httpErrorMessage(error, 'Failed to equip'), 'error'); }
   };
 
 
