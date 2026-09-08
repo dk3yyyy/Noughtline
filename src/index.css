@@ -33,6 +33,40 @@
   --card-bg: #121319;
   --nav-bg: #0d0e12;
   --shadow-dialog: 0 28px 80px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.05);
+  /* Accent alpha ramps (rings, glows, tints) — consume App.css raw rgba() values */
+  --accent-purple-wash: rgba(124, 108, 255, 0.22);
+  --accent-purple-faint: rgba(124, 108, 255, 0.06);
+  --accent-purple-glow: rgba(124, 108, 255, 0.35);
+  --accent-purple-glow-strong: rgba(124, 108, 255, 0.5);
+  --accent-teal-soft: rgba(73, 214, 180, 0.12);
+  --accent-teal-faint: rgba(73, 214, 180, 0.03);
+  --accent-teal-glow: rgba(73, 214, 180, 0.35);
+  --accent-teal-glow-strong: rgba(73, 214, 180, 0.5);
+  --gold-soft: rgba(245, 196, 81, 0.1);
+  --gold-faint: rgba(245, 196, 81, 0.03);
+  --gold-glow: rgba(245, 196, 81, 0.35);
+  --gold-glow-strong: rgba(245, 196, 81, 0.55);
+  --danger-soft: rgba(255, 95, 109, 0.12);
+  --danger-glow: rgba(255, 95, 109, 0.4);
+  /* Overlays: scrim + chip surfaces that must keep working over light content */
+  --overlay: rgba(3, 4, 6, 0.78);
+  /* Dark chip over item art (rarity tag): intentionally theme-invariant so light
+     rarity text keeps contrast — do NOT add a [data-theme='light'] override. */
+  --overlay-strong: rgba(8, 9, 11, 0.84);
+  /* Type scale (rem) */
+  --fs-xxs: 0.62rem;
+  --fs-xs: 0.68rem;
+  --fs-sm: 0.72rem;
+  --fs-md: 0.8rem;
+  --fs-lg: 0.9rem;
+  --fs-xl: 1.05rem;
+  /* Radius scale (px) */
+  --r-xs: 6px;
+  --r-sm: 8px;
+  --r-md: 10px;
+  --r-lg: 12px;
+  --r-xl: 16px;
+  --r-pill: 999px;
 }
 
 [data-theme='light'] {
@@ -54,6 +88,24 @@
   --card-bg: #ffffff;
   --nav-bg: rgba(255, 255, 255, 0.94);
   --shadow-dialog: 0 28px 80px rgba(23, 24, 32, 0.18), 0 0 0 1px rgba(18, 20, 27, 0.06);
+  /* Accent alpha ramps — deeper bases so rings/tints stay legible on white */
+  --accent-purple-wash: rgba(102, 85, 238, 0.16);
+  --accent-purple-faint: rgba(102, 85, 238, 0.05);
+  --accent-purple-glow: rgba(102, 85, 238, 0.35);
+  --accent-purple-glow-strong: rgba(102, 85, 238, 0.5);
+  --accent-teal-soft: rgba(16, 158, 125, 0.12);
+  --accent-teal-faint: rgba(16, 158, 125, 0.05);
+  --accent-teal-glow: rgba(16, 158, 125, 0.4);
+  --accent-teal-glow-strong: rgba(16, 158, 125, 0.55);
+  --gold-soft: rgba(212, 160, 23, 0.12);
+  --gold-faint: rgba(212, 160, 23, 0.05);
+  --gold-glow: rgba(196, 139, 10, 0.5);
+  --gold-glow-strong: rgba(196, 139, 10, 0.65);
+  --danger-soft: rgba(225, 29, 72, 0.1);
+  --danger-glow: rgba(214, 40, 70, 0.45);
+  /* Scrim: dims the page behind modals in both themes (lighter in light mode) */
+  --overlay: rgba(10, 12, 18, 0.5);
+  /* --overlay-strong intentionally inherits the dark value (dark chip over art). */
 }
 
 * {
