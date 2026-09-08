@@ -14,6 +14,7 @@ const { createEconomy, GEM_PACKAGES } = require('./economy');
 const { createQuestService } = require('./quests');
 const { createAchievementService } = require('./achievements');
 const { createGoogleAuth } = require('./googleAuth');
+const { createTournamentService, MATCH_ROOM_PREFIX } = require('./tournaments');
 const { RoomManager } = require('./game/roomManager');
 const { Matchmaker } = require('./game/matchmaker');
 const { ActionRateLimiter } = require('./game/actionRateLimiter');
@@ -45,7 +46,7 @@ function randomRoomId(prefix = '') {
   return `${prefix}${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
 }
 
-function createRuntime({ config, database, fetchImpl, startTimers = true, googleAuth: googleAuthOption, questService: questServiceOption, achievementService: achievementServiceOption } = {}) {
+function createRuntime({ config, database, fetchImpl, startTimers = true, googleAuth: googleAuthOption, questService: questServiceOption, achievementService: achievementServiceOption, tournamentService: tournamentServiceOption } = {}) {
   if (!config) throw new Error('config is required');
   const db = database || createDatabase(config.databasePath);
   const auth = createAuth({ db, config });
@@ -144,8 +145,27 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
     }
   })();
 
-  const roomManager = new RoomManager({ onSeriesComplete: settleSeries });
+  // Tournament match rooms flow through the exact same settlement as every
+  // other series, then hand the completed room to the tournament service so
+  // the bracket advances. Chaining AFTER settleSeries (rather than inside the
+  // settlement transaction) means afterSeriesComplete only ever runs once the
+  // series_results row has committed — if settleSeries throws, the tournament
+  // hook is never reached. Tournament rooms are created rewardEligible:false,
+  // so settleSeries records the result but mints no coins/XP/quests/Elo and
+  // only the explicit tournament reward schedule pays out at the end.
+  let tournamentService;
+  const onSeriesComplete = (room, roundHistory) => {
+    const result = settleSeries(room, roundHistory);
+    if (tournamentService && String(room.id || '').toUpperCase().startsWith(MATCH_ROOM_PREFIX)) {
+      tournamentService.afterSeriesComplete(room);
+    }
+    return result;
+  };
+  const roomManager = new RoomManager({ onSeriesComplete });
   const matchmaker = new Matchmaker();
+  // Needs roomManager (auto-creates match rooms on entry, scans rooms for
+  // cancellations), so it is built after the manager that references it.
+  tournamentService = tournamentServiceOption || createTournamentService({ db, economy, roomManager });
   const roomActionLimiter = new ActionRateLimiter({
     limit: config.roomActionRateLimit,
     windowMs: config.roomActionRateWindowMs,
@@ -419,6 +439,35 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
     } catch (error) { return codedError(error, res, next); }
   });
 
+  app.get('/api/tournaments', auth.requireAuth, (req, res) => {
+    // Tournament lobbies are shared state; the summaries below refresh on the
+    // natural request cadence (join/create/fetch), so no cache header tricks.
+    res.json(tournamentService.list());
+  });
+  app.post('/api/tournaments', auth.requireAuth, (req, res, next) => {
+    try {
+      res.status(201).json(tournamentService.create({ userId: req.user.id }));
+    } catch (error) { return codedError(error, res, next); }
+  });
+  app.get('/api/tournaments/:id', auth.requireAuth, (req, res, next) => {
+    try {
+      res.json(tournamentService.get(req.params.id));
+    } catch (error) { return codedError(error, res, next); }
+  });
+  app.post('/api/tournaments/:id/join', auth.requireAuth, (req, res, next) => {
+    try {
+      res.json(tournamentService.join({ tournamentId: req.params.id, userId: req.user.id, rating: req.user.rating }));
+    } catch (error) { return codedError(error, res, next); }
+  });
+  // HTTP entry into a match: guarantees the match room exists (auto-created on
+  // first entry, idempotent) and returns the room id the client then
+  // socket-emits join_room with. There is deliberately no socket-level enter.
+  app.post('/api/tournaments/:id/matches/:matchId/enter', auth.requireAuth, (req, res, next) => {
+    try {
+      res.json(tournamentService.ensureMatchRoom({ matchId: req.params.matchId, userId: req.user.id }));
+    } catch (error) { return codedError(error, res, next); }
+  });
+
   app.get('/api/leaderboard', (_req, res) => {
     res.json(db.prepare("SELECT username, avatar, xp, level, wins, rating FROM users WHERE username != 'AI_Bot' ORDER BY rating DESC, xp DESC, wins DESC LIMIT 50").all());
   });
@@ -627,6 +676,9 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
       }
       for (const player of matchmaker.expiredPlayers(15_000)) io.to(player.socketId).emit('match_fallback_ai');
       for (const result of roomManager.resolveDisconnectTimeouts()) io.to(result.roomId).emit('room_update', result.room);
+      // Runs after disconnect-timeout resolution so rooms cancelled this tick
+      // are resolved to a walkover immediately; self-throttles to ~5s.
+      tournamentService.advanceDeadlines();
       roomActionLimiter.prune();
       chatLimiter.prune();
       googleAuth.pruneNonces();
@@ -639,7 +691,7 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
     return new Promise((resolve) => io.close(() => server.close(() => { db.close(); resolve(); })));
   }
 
-  return { app, server, io, db, auth, economy, googleAuth, questService, achievementService, roomManager, matchmaker, close };
+  return { app, server, io, db, auth, economy, googleAuth, questService, achievementService, tournamentService, roomManager, matchmaker, close };
 }
 
 module.exports = { createRuntime };
