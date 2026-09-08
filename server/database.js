@@ -28,6 +28,7 @@ function initDb(db) {
       losses INTEGER NOT NULL DEFAULT 0 CHECK (losses >= 0),
       draws INTEGER NOT NULL DEFAULT 0 CHECK (draws >= 0),
       streak INTEGER NOT NULL DEFAULT 0 CHECK (streak >= 0),
+      max_streak INTEGER NOT NULL DEFAULT 0 CHECK (max_streak >= 0),
       rating INTEGER NOT NULL DEFAULT 1000,
       active_avatar_id INTEGER,
       session_version INTEGER NOT NULL DEFAULT 0,
@@ -109,6 +110,14 @@ function initDb(db) {
       FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS user_achievements (
+      user_id INTEGER NOT NULL,
+      achievement_id TEXT NOT NULL,
+      claimed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (user_id, achievement_id),
+      FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+
     CREATE INDEX IF NOT EXISTS idx_ledger_user_created ON currency_ledger(user_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_series_players ON series_results(player_x_id, player_o_id, completed_at DESC);
   `);
@@ -124,6 +133,11 @@ function initDb(db) {
   addColumnIfNotExists(db, 'users', 'active_avatar_id', 'INTEGER');
   addColumnIfNotExists(db, 'users', 'session_version', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfNotExists(db, 'users', 'rating', 'INTEGER NOT NULL DEFAULT 1000');
+  addColumnIfNotExists(db, 'users', 'max_streak', 'INTEGER NOT NULL DEFAULT 0');
+  // Existing players who already hold a streak at deploy time would otherwise
+  // lose eligibility for streak achievements: seed max_streak from the current
+  // streak when the column is first added. No-op on fresh databases.
+  db.exec('UPDATE users SET max_streak = streak WHERE max_streak < streak');
   addColumnIfNotExists(db, 'users', 'last_daily_reward_date', 'TEXT');
   addColumnIfNotExists(db, 'avatars', 'cost_coins', 'INTEGER NOT NULL DEFAULT 0');
   addColumnIfNotExists(db, 'avatars', 'currency', "TEXT NOT NULL DEFAULT 'gems'");

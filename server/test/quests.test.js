@@ -43,6 +43,23 @@ function settlePlayedWin(runtime, roomId, xSession, oSession) {
   return runtime.roomManager.makeMove(roomId, 2, xSession.user.id, `${roomId}-x`);
 }
 
+// X and O trade moves that fill a 3x3 board with no winning line, ending the
+// 1-round series in a Draw through the normal 'played' path.
+function settlePlayedDraw(runtime, roomId, xSession, oSession) {
+  runtime.roomManager.createRoom(roomId, { size: 3, rounds: 1 }, { rewardEligible: true });
+  runtime.roomManager.joinRoom(roomId, { userId: xSession.user.id, socketId: `${roomId}-x`, username: xSession.user.username });
+  runtime.roomManager.joinRoom(roomId, { userId: oSession.user.id, socketId: `${roomId}-o`, username: oSession.user.username });
+  const moves = [
+    [0, 'x'], [1, 'o'], [2, 'x'], [4, 'o'], [3, 'x'],
+    [6, 'o'], [7, 'x'], [5, 'o'], [8, 'x'],
+  ];
+  for (const [index, side] of moves) {
+    const session = side === 'x' ? xSession : oSession;
+    runtime.roomManager.makeMove(roomId, index, session.user.id, `${roomId}-${side}`);
+  }
+  return runtime.roomManager.getRoom(roomId);
+}
+
 function questProgressByQuestId(runtime, userId, day) {
   return Object.fromEntries(
     runtime.db.prepare('SELECT quest_id, progress FROM quest_progress WHERE user_id = ? AND day = ?')
@@ -70,9 +87,10 @@ test('reward-eligible played win series progresses win and play quests; settleme
 
   const day = todayString();
   assert.deepEqual(questProgressByQuestId(runtime, winner.user.id, day), {
-    play_3: 1, play_5: 1, win_1: 1, win_3: 1,
+    play_1: 1, play_3: 1, play_5: 1, win_1: 1, win_3: 1, win_5: 1,
   });
-  assert.deepEqual(questProgressByQuestId(runtime, loser.user.id, day), { play_3: 1, play_5: 1 });
+  // A win progresses play + win quests but never the draw quest.
+  assert.deepEqual(questProgressByQuestId(runtime, loser.user.id, day), { play_1: 1, play_3: 1, play_5: 1 });
 
   // Quest recording must not alter the existing settlement math.
   const winnerProfile = await request(runtime.app).get('/api/me').set('Authorization', `Bearer ${winner.token}`);
@@ -142,16 +160,23 @@ test('GET /api/quests lists the catalog unclaimed with zero progress for a fresh
   assert.equal(response.status, 200);
   assert.equal(response.body.day, todayString());
   assert.equal(response.body.dailyRewardClaimed, false);
-  assert.deepEqual(response.body.quests.map((quest) => quest.id), ['play_3', 'win_1', 'win_3', 'play_5']);
+  assert.deepEqual(response.body.quests.map((quest) => quest.id), ['play_1', 'play_3', 'play_5', 'win_1', 'win_3', 'win_5', 'draw_1']);
   for (const quest of response.body.quests) {
     assert.equal(quest.progress, 0);
     assert.equal(quest.claimed, false);
     assert.equal(typeof quest.description, 'string');
     assert.equal(typeof quest.target, 'number');
-    assert.ok(['play', 'win'].includes(quest.kind));
+    assert.ok(['play', 'win', 'draw'].includes(quest.kind));
     assert.ok(['coins', 'gems'].includes(quest.reward.currency));
     assert.equal(typeof quest.reward.amount, 'number');
   }
+  const play1 = response.body.quests.find((quest) => quest.id === 'play_1');
+  assert.deepEqual(play1.reward, { currency: 'coins', amount: 40 });
+  const win5 = response.body.quests.find((quest) => quest.id === 'win_5');
+  assert.deepEqual(win5.reward, { currency: 'gems', amount: 20 });
+  const draw1 = response.body.quests.find((quest) => quest.id === 'draw_1');
+  assert.equal(draw1.kind, 'draw');
+  assert.deepEqual(draw1.reward, { currency: 'coins', amount: 30 });
   const play5 = response.body.quests.find((quest) => quest.id === 'play_5');
   assert.deepEqual(play5.reward, { currency: 'gems', amount: 10 });
 });
@@ -290,7 +315,7 @@ test('quest progress is scoped to its UTC day and does not leak into the next da
   // Progress earned yesterday lives only on yesterday's row.
   questService.recordSettledSeries({ userId: session.user.id, outcome: 'won', day: '2026-09-07' });
   assert.deepEqual(questProgressByQuestId(runtime, session.user.id, '2026-09-07'), {
-    play_3: 1, play_5: 1, win_1: 1, win_3: 1,
+    play_1: 1, play_3: 1, play_5: 1, win_1: 1, win_3: 1, win_5: 1,
   });
   assert.equal(runtime.db.prepare('SELECT COUNT(*) AS count FROM quest_progress WHERE day = ?').get('2026-09-08').count, 0);
 
@@ -335,12 +360,97 @@ test('series settlement records quest progress under the injected quest clock', 
     runtime.db.prepare('SELECT quest_id, progress FROM quest_progress WHERE user_id = ? AND day = ?')
       .all(userId, '2026-09-08').map((row) => [row.quest_id, row.progress]),
   );
-  assert.deepEqual(progressByQuest(x.user.id), { play_3: 1, play_5: 1, win_1: 1, win_3: 1 });
-  assert.deepEqual(progressByQuest(o.user.id), { play_3: 1, play_5: 1 });
+  assert.deepEqual(progressByQuest(x.user.id), { play_1: 1, play_3: 1, play_5: 1, win_1: 1, win_3: 1, win_5: 1 });
+  assert.deepEqual(progressByQuest(o.user.id), { play_1: 1, play_3: 1, play_5: 1 });
   for (const player of [x, o]) {
     assert.equal(
       runtime.db.prepare('SELECT COUNT(*) AS count FROM quest_progress WHERE user_id = ? AND day != ?').get(player.user.id, '2026-09-08').count,
       0,
     );
   }
+});
+
+test('play_1 completes after the first played series and pays 40 coins once', async (t) => {
+  const runtime = createTestRuntime();
+  t.after(() => runtime.db.close());
+  const winner = await guest(runtime);
+  settlePlayedWin(runtime, 'ROOM_QUEST_PLAY1', winner, await guest(runtime));
+  const day = todayString();
+
+  const claim = await request(runtime.app)
+    .post('/api/quests/play_1/claim')
+    .set('Authorization', `Bearer ${winner.token}`);
+  assert.equal(claim.status, 200);
+  assert.deepEqual(claim.body, { questId: 'play_1', reward: { currency: 'coins', amount: 40 } });
+  assert.equal(runtime.db.prepare('SELECT coins FROM users WHERE id = ?').get(winner.user.id).coins, 10 + 40);
+  const ledgerRow = runtime.db.prepare('SELECT amount, reason FROM currency_ledger WHERE reference = ?').get(`quest:play_1:${day}:coins`);
+  assert.equal(ledgerRow.amount, 40);
+  assert.equal(ledgerRow.reason, 'quest_reward');
+
+  const duplicate = await request(runtime.app)
+    .post('/api/quests/play_1/claim')
+    .set('Authorization', `Bearer ${winner.token}`);
+  assert.equal(duplicate.status, 409);
+  assert.equal(duplicate.body.code, 'QUEST_ALREADY_CLAIMED');
+});
+
+test('played draw series progresses play and draw quests but never win quests', async (t) => {
+  const runtime = createTestRuntime();
+  t.after(() => runtime.db.close());
+  const x = await guest(runtime);
+  const o = await guest(runtime);
+  const room = settlePlayedDraw(runtime, 'ROOM_QUEST_DRAW1', x, o);
+  assert.equal(room.state.seriesWinner, 'Draw');
+
+  const day = todayString();
+  for (const player of [x, o]) {
+    assert.deepEqual(questProgressByQuestId(runtime, player.user.id, day), {
+      play_1: 1, play_3: 1, play_5: 1, draw_1: 1,
+    });
+  }
+  const state = (await request(runtime.app).get('/api/quests').set('Authorization', `Bearer ${x.token}`)).body;
+  assert.equal(state.quests.find((quest) => quest.id === 'draw_1').progress, 1);
+  assert.equal(state.quests.find((quest) => quest.id === 'win_1').progress, 0);
+
+  const claim = await request(runtime.app)
+    .post('/api/quests/draw_1/claim')
+    .set('Authorization', `Bearer ${x.token}`);
+  assert.equal(claim.status, 200);
+  assert.deepEqual(claim.body, { questId: 'draw_1', reward: { currency: 'coins', amount: 30 } });
+  // 5 coins for the draw settlement + 30 quest reward.
+  assert.equal(runtime.db.prepare('SELECT coins FROM users WHERE id = ?').get(x.user.id).coins, 35);
+  const ledgerRow = runtime.db.prepare('SELECT amount, reason FROM currency_ledger WHERE reference = ?').get(`quest:draw_1:${day}:coins`);
+  assert.equal(ledgerRow.amount, 30);
+  assert.equal(ledgerRow.reason, 'quest_reward');
+});
+
+test('win_5 completes across five wins and its gem reward claims exactly once', async (t) => {
+  const runtime = createTestRuntime();
+  t.after(() => runtime.db.close());
+  const winner = await guest(runtime);
+  const opponent = await guest(runtime);
+  for (let i = 1; i <= 5; i += 1) {
+    settlePlayedWin(runtime, `ROOM_QUEST_W5_${i}`, winner, opponent);
+  }
+  const day = todayString();
+  assert.deepEqual(questProgressByQuestId(runtime, winner.user.id, day), {
+    play_1: 5, play_3: 5, play_5: 5, win_1: 5, win_3: 5, win_5: 5,
+  });
+
+  const claim = await request(runtime.app)
+    .post('/api/quests/win_5/claim')
+    .set('Authorization', `Bearer ${winner.token}`);
+  assert.equal(claim.status, 200);
+  assert.deepEqual(claim.body, { questId: 'win_5', reward: { currency: 'gems', amount: 20 } });
+  assert.equal(runtime.db.prepare('SELECT gems FROM users WHERE id = ?').get(winner.user.id).gems, 120);
+  const ledgerRow = runtime.db.prepare('SELECT amount, reason FROM currency_ledger WHERE reference = ?').get(`quest:win_5:${day}:gems`);
+  assert.equal(ledgerRow.amount, 20);
+  assert.equal(ledgerRow.reason, 'quest_reward');
+
+  const duplicate = await request(runtime.app)
+    .post('/api/quests/win_5/claim')
+    .set('Authorization', `Bearer ${winner.token}`);
+  assert.equal(duplicate.status, 409);
+  assert.equal(duplicate.body.code, 'QUEST_ALREADY_CLAIMED');
+  assert.equal(runtime.db.prepare("SELECT COUNT(*) AS count FROM currency_ledger WHERE reference = ?").get(`quest:win_5:${day}:gems`).count, 1);
 });

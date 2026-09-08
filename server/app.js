@@ -12,6 +12,7 @@ const { computeNewRatings } = require('./elo');
 const { createAuth } = require('./auth');
 const { createEconomy, GEM_PACKAGES } = require('./economy');
 const { createQuestService } = require('./quests');
+const { createAchievementService } = require('./achievements');
 const { createGoogleAuth } = require('./googleAuth');
 const { RoomManager } = require('./game/roomManager');
 const { Matchmaker } = require('./game/matchmaker');
@@ -44,13 +45,14 @@ function randomRoomId(prefix = '') {
   return `${prefix}${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
 }
 
-function createRuntime({ config, database, fetchImpl, startTimers = true, googleAuth: googleAuthOption, questService: questServiceOption } = {}) {
+function createRuntime({ config, database, fetchImpl, startTimers = true, googleAuth: googleAuthOption, questService: questServiceOption, achievementService: achievementServiceOption } = {}) {
   if (!config) throw new Error('config is required');
   const db = database || createDatabase(config.databasePath);
   const auth = createAuth({ db, config });
   const economy = createEconomy({ db, config, fetchImpl });
   const googleAuth = googleAuthOption || createGoogleAuth({ config, fetchImpl });
   const questService = questServiceOption || createQuestService({ db, economy });
+  const achievementService = achievementServiceOption || createAchievementService({ db, economy });
 
   const settleSeries = (room, roundHistory) => db.transaction(() => {
     const playerX = room.players.find((player) => player.symbol === 'X');
@@ -93,7 +95,10 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
       if (isDraw) {
         db.prepare('UPDATE users SET draws = draws + 1, xp = xp + ? WHERE id = ?').run(xp, player.id);
       } else if (didWin) {
-        db.prepare('UPDATE users SET wins = wins + 1, streak = streak + 1, xp = xp + ? WHERE id = ?').run(xp, player.id);
+        // max_streak mirrors the current streak semantics exactly: it tracks
+        // the best lifetime streak and follows streak wherever a win (forfeit
+        // or played) increments it.
+        db.prepare('UPDATE users SET wins = wins + 1, streak = streak + 1, max_streak = MAX(max_streak, streak + 1), xp = xp + ? WHERE id = ?').run(xp, player.id);
       } else {
         db.prepare('UPDATE users SET losses = losses + 1, streak = 0, xp = xp + ? WHERE id = ?').run(xp, player.id);
       }
@@ -296,7 +301,7 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
     return res.json(outcome);
   });
 
-  app.get('/api/me', auth.requireAuth, (req, res) => res.json(publicUser(req.user)));
+  app.get('/api/me', auth.requireAuth, (req, res) => res.set('Cache-Control', 'no-store').json(publicUser(req.user)));
   app.get('/api/me/inventory', auth.requireAuth, (req, res) => {
     const items = db.prepare(`
       SELECT a.* FROM avatars a
@@ -375,24 +380,37 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
     return res.json({ pending: true, ...pending });
   });
 
-  const questError = (error, res, next) => {
+  const codedError = (error, res, next) => {
     if (error && error.code) return res.status(error.status || 409).json({ error: error.message, code: error.code });
     return next(error);
   };
 
   app.get('/api/quests', auth.requireAuth, (req, res) => {
     const { day, dailyRewardClaimed } = questService.getDailyState(req.user);
-    res.json({ day, dailyRewardClaimed, quests: questService.getQuestsForUser(req.user, day) });
+    // Personal, day-scoped data: never serve a cached copy (a stale quest day
+    // or claim state would be visibly wrong).
+    res.set('Cache-Control', 'no-store').json({ day, dailyRewardClaimed, quests: questService.getQuestsForUser(req.user, day) });
   });
   app.post('/api/quests/daily-claim', auth.requireAuth, (req, res, next) => {
     try {
       res.json(questService.claimDailyReward(req.user));
-    } catch (error) { return questError(error, res, next); }
+    } catch (error) { return codedError(error, res, next); }
   });
   app.post('/api/quests/:questId/claim', auth.requireAuth, (req, res, next) => {
     try {
       res.json(questService.claimQuest(req.user, req.params.questId));
-    } catch (error) { return questError(error, res, next); }
+    } catch (error) { return codedError(error, res, next); }
+  });
+
+  app.get('/api/achievements', auth.requireAuth, (req, res) => {
+    // Personal claim state: never serve a cached copy (stale claimed flags
+    // would let the UI show claimable achievements twice).
+    res.set('Cache-Control', 'no-store').json({ achievements: achievementService.achievementStateFor(req.user) });
+  });
+  app.post('/api/achievements/:achievementId/claim', auth.requireAuth, (req, res, next) => {
+    try {
+      res.json(achievementService.claimAchievement(req.user, req.params.achievementId));
+    } catch (error) { return codedError(error, res, next); }
   });
 
   app.get('/api/leaderboard', (_req, res) => {
@@ -579,7 +597,7 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
     return new Promise((resolve) => io.close(() => server.close(() => { db.close(); resolve(); })));
   }
 
-  return { app, server, io, db, auth, economy, googleAuth, questService, roomManager, matchmaker, close };
+  return { app, server, io, db, auth, economy, googleAuth, questService, achievementService, roomManager, matchmaker, close };
 }
 
 module.exports = { createRuntime };
