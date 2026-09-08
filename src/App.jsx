@@ -4,6 +4,7 @@ import { clearActiveRoom, createInviteUrl, getInviteRoomId, normalizeRoomId, rea
 import { mergeToast } from './services/toasts';
 import { dateText, friendlyLedgerReason, outcomeFor, scoreText, signedAmount } from './services/history';
 import { canClaimQuest, DAILY_REWARD, dailyRewardCopy, questComplete, questProgressLabel, rewardLabel } from './services/quests';
+import { insufficientGuidance, insufficientLabel, itemCost, shortfallText } from './services/shop';
 import { achievementIconKey, claimButtonLabel, tileStateClass } from './services/achievements';
 import { parsePaymentComplete, providerReturnState } from './services/payments';
 import { deltaLabel, formatRating, isRankedRoom, ratingDelta } from './services/ratings';
@@ -742,11 +743,12 @@ const BuyGemsModal = ({ show, onClose, packages, onBuy }) => {
   );
 };
 
-const ShopItemModal = ({ show, onClose, item, user, onBuy }) => {
+const ShopItemModal = ({ show, onClose, item, user, onBuy, onCannotAfford }) => {
   if (!show || !item) return null;
   const currency = item.currency === 'coins' ? 'coins' : 'gems';
-  const cost = currency === 'coins' ? item.cost_coins : item.cost_gems;
+  const cost = itemCost(item);
   const canAfford = (user[currency] || 0) >= cost;
+  const showShortfall = !canAfford && cost > 0;
 
   return (
     <div className="modal-backdrop glass-backdrop">
@@ -763,14 +765,24 @@ const ShopItemModal = ({ show, onClose, item, user, onBuy }) => {
         <div className="item-price">
           {cost} {currency === 'coins' ? <Coins size={18} color="#fbbf24" fill="#fbbf24" /> : <Gem size={18} color="#2dd4bf" fill="#2dd4bf" />}
         </div>
+        {showShortfall && (
+          <p className="item-shortfall">{shortfallText(item, user[currency])}</p>
+        )}
 
         <p className="item-desc">{item.description || "Unlock this exclusive item for your collection."}</p>
 
         <button
           className={`btn-action-lg ${canAfford ? 'btn-purple' : 'btn-disabled'}`}
-          onClick={() => canAfford ? onBuy(item.id) : null}
+          onClick={() => {
+            if (canAfford) {
+              onBuy(item.id);
+            } else if (onCannotAfford) {
+              // Never dead-end a click: explain how to earn the currency.
+              onCannotAfford(item);
+            }
+          }}
         >
-          {canAfford ? 'Unlock Item' : 'Insufficient Gems'}
+          {canAfford ? 'Unlock Item' : insufficientLabel(item)}
         </button>
 
         <button className="btn-close-white" onClick={onClose}>Close</button>
@@ -2550,6 +2562,7 @@ export default function App() {
         item={selectedShopItem}
         user={user}
         onBuy={buyAvatar}
+        onCannotAfford={(shopItem) => notify(insufficientGuidance(shopItem), 'error')}
       />
 
       <main className="content">

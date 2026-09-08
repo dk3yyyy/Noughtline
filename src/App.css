@@ -1769,6 +1769,15 @@
   line-height: 1.55;
 }
 
+.item-shortfall {
+  margin: 6px auto 0;
+  max-width: 30ch;
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  line-height: 1.45;
+  text-align: center;
+}
+
 .btn-stack {
   display: grid;
   gap: 8px;
