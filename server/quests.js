@@ -7,6 +7,15 @@
 // atomic ledger entries with unique references (`daily:<day>:<currency>`,
 // `quest:<questId>:<day>:<currency>`) and the users balance can never be
 // double-minted. Days are UTC calendar days ('YYYY-MM-DD') everywhere.
+//
+// Coin payouts can be scaled by an active boost event (server/events.js): the
+// injected coinMultiplier() is applied AT CREDIT TIME and floored to a whole
+// integer, and only to COIN amounts — gems are never boosted. References are
+// left unchanged, so idempotency is intact: a duplicate claim still resolves
+// to the same single ledger row, and a retry after the boost window closes can
+// never mint extra coins. The reward amounts echoed back in claim responses
+// (granted/reward) reflect the actual credited (boosted) amount, while the
+// quest catalog and GET /api/quests keep showing the base reward.
 
 const DAILY_REWARD = Object.freeze({ coins: 50, gems: 10 });
 
@@ -32,7 +41,7 @@ function utcDayString(date) {
   return new Date(date).toISOString().slice(0, 10);
 }
 
-function createQuestService({ db, economy, now = () => Date.now() }) {
+function createQuestService({ db, economy, now = () => Date.now(), coinMultiplier = () => 1 }) {
   const today = () => utcDayString(new Date(now()));
 
   const bumpProgress = db.prepare(`
@@ -93,10 +102,14 @@ function createQuestService({ db, economy, now = () => Date.now() }) {
       if (row?.last_daily_reward_date === day) {
         throw Object.assign(new Error('Daily reward already claimed for today'), { code: 'DAILY_REWARD_CLAIMED', status: 409 });
       }
+      // Boosted coins are floored to a whole integer at credit time; the
+      // reference stays `daily:<day>:coins`, so a duplicate claim can never
+      // double-credit. Gems are never boosted.
+      const coins = Math.floor(DAILY_REWARD.coins * coinMultiplier());
       economy.changeBalance({
         userId: user.id,
         currency: 'coins',
-        amount: DAILY_REWARD.coins,
+        amount: coins,
         reason: 'daily_reward',
         reference: `daily:${day}:coins`,
         metadata: { day },
@@ -110,7 +123,7 @@ function createQuestService({ db, economy, now = () => Date.now() }) {
         metadata: { day },
       });
       db.prepare('UPDATE users SET last_daily_reward_date = ? WHERE id = ?').run(day, user.id);
-      return { day, granted: { coins: DAILY_REWARD.coins, gems: DAILY_REWARD.gems } };
+      return { day, granted: { coins, gems: DAILY_REWARD.gems } };
     })();
   }
 
@@ -129,17 +142,24 @@ function createQuestService({ db, economy, now = () => Date.now() }) {
       if (row.claimed === 1) {
         throw Object.assign(new Error('Quest reward already claimed'), { code: 'QUEST_ALREADY_CLAIMED', status: 409 });
       }
+      // Only coin rewards scale with the boost (floored to a whole integer at
+      // credit time); the reference stays `quest:<id>:<day>:<currency>`, so a
+      // duplicate claim can never double-credit even across a boost boundary.
+      const isCoinReward = quest.reward.currency === 'coins';
+      const amount = isCoinReward
+        ? Math.floor(quest.reward.amount * coinMultiplier())
+        : quest.reward.amount;
       economy.changeBalance({
         userId: user.id,
         currency: quest.reward.currency,
-        amount: quest.reward.amount,
+        amount,
         reason: 'quest_reward',
         reference: `quest:${quest.id}:${day}:${quest.reward.currency}`,
         metadata: { questId: quest.id, day },
       });
       db.prepare('UPDATE quest_progress SET claimed = 1 WHERE user_id = ? AND quest_id = ? AND day = ?')
         .run(user.id, quest.id, day);
-      return { questId: quest.id, reward: { ...quest.reward } };
+      return { questId: quest.id, reward: { currency: quest.reward.currency, amount } };
     })();
   }
 

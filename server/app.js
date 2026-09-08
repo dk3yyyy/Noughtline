@@ -12,6 +12,7 @@ const { computeNewRatings } = require('./elo');
 const { createAuth } = require('./auth');
 const { createEconomy, GEM_PACKAGES } = require('./economy');
 const { createQuestService } = require('./quests');
+const { createEventService } = require('./events');
 const { createAchievementService } = require('./achievements');
 const { createGoogleAuth } = require('./googleAuth');
 const { createTournamentService, MATCH_ROOM_PREFIX } = require('./tournaments');
@@ -46,13 +47,25 @@ function randomRoomId(prefix = '') {
   return `${prefix}${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
 }
 
-function createRuntime({ config, database, fetchImpl, startTimers = true, googleAuth: googleAuthOption, questService: questServiceOption, achievementService: achievementServiceOption, tournamentService: tournamentServiceOption } = {}) {
+function createRuntime({ config, database, fetchImpl, startTimers = true, googleAuth: googleAuthOption, questService: questServiceOption, eventsService: eventsServiceOption, achievementService: achievementServiceOption, tournamentService: tournamentServiceOption } = {}) {
   if (!config) throw new Error('config is required');
   const db = database || createDatabase(config.databasePath);
   const auth = createAuth({ db, config });
   const economy = createEconomy({ db, config, fetchImpl });
   const googleAuth = googleAuthOption || createGoogleAuth({ config, fetchImpl });
-  const questService = questServiceOption || createQuestService({ db, economy });
+  const eventsService = eventsServiceOption || createEventService();
+  // Coin quest/daily-reward payouts scale with whichever coin boost events are
+  // active (weekend_x2 = 2x on UTC weekends). The boost is only wired outside
+  // the automated suite — quests.test.js and friends assert exact payouts
+  // against the real wall clock and must not flip on a UTC-weekend CI run —
+  // unless a test explicitly injects an events service (or its own quest
+  // service) to opt in deterministically.
+  const boostCoinRewards = config.nodeEnv !== 'test' || Boolean(eventsServiceOption);
+  const questOptions = { db, economy };
+  if (boostCoinRewards) {
+    questOptions.coinMultiplier = () => eventsService.coinMultiplier();
+  }
+  const questService = questServiceOption || createQuestService(questOptions);
   const achievementService = achievementServiceOption || createAchievementService({ db, economy });
 
   const settleSeries = (room, roundHistory) => db.transaction(() => {
@@ -428,6 +441,15 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
     } catch (error) { return codedError(error, res, next); }
   });
 
+  // Public (no auth): the active boost schedule is shared, non-personal state.
+  // It rides the default cache headers like the other public endpoints
+  // (/api/leaderboard, /api/shop/items) — no Cache-Control: no-store, which is
+  // reserved for personal, day-scoped data above. A stale copy is at worst a
+  // UTC day boundary old and the client banner refetch reconciles it.
+  app.get('/api/events/active', (_req, res) => {
+    res.json({ events: eventsService.active() });
+  });
+
   app.get('/api/achievements', auth.requireAuth, (req, res) => {
     // Personal claim state: never serve a cached copy (stale claimed flags
     // would let the UI show claimable achievements twice).
@@ -691,7 +713,7 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
     return new Promise((resolve) => io.close(() => server.close(() => { db.close(); resolve(); })));
   }
 
-  return { app, server, io, db, auth, economy, googleAuth, questService, achievementService, tournamentService, roomManager, matchmaker, close };
+  return { app, server, io, db, auth, economy, googleAuth, questService, eventsService, achievementService, tournamentService, roomManager, matchmaker, close };
 }
 
 module.exports = { createRuntime };
