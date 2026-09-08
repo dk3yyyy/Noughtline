@@ -436,11 +436,37 @@ function createTournamentService({ db, economy, roomManager, now = () => Date.no
     return get(tournamentId);
   }
 
+  // Cancels an open or in-progress tournament. Only the creator may cancel
+  // (403 otherwise); completed/cancelled tournaments are immutable (409).
+  // Materialized match rooms are deleted so no ghost play can continue.
+  function cancel({ tournamentId, userId } = {}) {
+    db.transaction(() => {
+      const tournament = getTournamentRow.get(tournamentId);
+      if (!tournament) throw httpError('Tournament not found', 'TOURNAMENT_NOT_FOUND', 404);
+      if (tournament.status === 'complete' || tournament.status === 'cancelled') {
+        throw httpError('Tournament is already finished', 'TOURNAMENT_NOT_CANCELLABLE', 409);
+      }
+      if (tournament.created_by !== userId) {
+        throw httpError('Only the tournament creator can cancel it', 'NOT_CREATOR', 403);
+      }
+      db.prepare('UPDATE tournaments SET status = ?, completed_at = ? WHERE id = ?')
+        .run('cancelled', isoNow(now()), tournamentId);
+      const roomRows = db.prepare('SELECT room_id FROM tournament_matches WHERE tournament_id = ? AND room_id IS NOT NULL')
+        .all(tournamentId);
+      for (const row of roomRows) {
+        const room = roomManager.getRoom(row.room_id);
+        if (room) roomManager.deleteRoom(row.room_id);
+      }
+    })();
+    return get(tournamentId);
+  }
+
   return {
     create,
     list,
     get,
     join,
+    cancel,
     ensureMatchRoom,
     afterSeriesComplete,
     advanceDeadlines,
