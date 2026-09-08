@@ -8,6 +8,19 @@ import { canClaimQuest, DAILY_REWARD, dailyRewardCopy, questComplete, questProgr
 import { insufficientGuidance, insufficientLabel, itemCost, shortfallText } from './services/shop';
 import { achievementIconKey, claimButtonLabel, tileStateClass } from './services/achievements';
 import { parsePaymentComplete, providerReturnState } from './services/payments';
+import {
+  REWARD_TABLE,
+  canEnterMatch,
+  isEliminated,
+  isTournamentParticipant,
+  joinButtonLabel,
+  matchOpponent,
+  matchStatusLabel,
+  myMatchId,
+  myTournamentReward,
+  roundLabel,
+  tournamentStatusLabel,
+} from './services/tournaments';
 import { deltaLabel, formatRating, isRankedRoom, ratingDelta } from './services/ratings';
 import { GOOGLE_CLIENT_ID } from './config';
 import { buildGoogleIdConfig, loadGsiScript, normalizeGoogleError, parseProviderResponse, signInAvailability } from './services/google';
@@ -1725,6 +1738,545 @@ const RoomChat = ({ roomId, userId, notify }) => {
   );
 };
 
+// --- Tournaments: lobby + bracket screens (T-2) ---
+//
+// v1 scope: an 8-player single-elimination knockout ladder. The lobby lists
+// every tournament (one open/in_progress at a time server-side); the detail
+// view renders the bracket grouped by round. When the caller's match is ready
+// (in_progress + waiting/active participant), "Enter match" POSTs the enter
+// endpoint and then reuses the EXACT private-room socket join path the app
+// already uses (handleJoinRoom: join_room -> saveActiveRoom -> GAME view), so
+// tournament match rooms behave like ordinary multiplayer rooms. While the
+// caller is still in a live tournament, the detail view polls
+// GET /api/tournaments/:id every 4s to surface the next match, eliminations
+// and the final result. Polling stops on unmount (view change) via the
+// AbortController cleanup, and never runs for spectators or eliminated
+// players. Leaving an entered match still returns HOME in v1 (the shared
+// clearRoomAndReturnHome path) — returning to the bracket is a follow-up.
+
+const TOURNAMENT_POLL_MS = 4000;
+const DEFAULT_TOURNAMENT_SIZE = 8;
+const EMPTY_COUNTS = { open: 0, in_progress: 0, complete: 0, cancelled: 0 };
+
+const fallbackAvatar = (seed) => `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(seed || 'player')}`;
+
+// Coded tournament errors carry a human-readable message already; surface it
+// and only fall back when the response has no body.
+const tournamentHttpError = (error, fallback) => (
+  (error && error.response && error.response.data && error.response.data.error) || fallback
+);
+
+const BracketPlayer = ({ userId, id, username, avatar, winner, loser }) => (
+  <div className={`bracket-player${winner ? ' is-winner' : ''}${loser ? ' is-loser' : ''}`}>
+    <img className="bracket-player-avatar" src={avatar || fallbackAvatar(username)} alt={`${username || 'Player'} avatar`} />
+    <span className="bracket-player-name">
+      {username || 'Player'}
+      {id != null && userId != null && String(id) === String(userId) && <em className="bracket-you">You</em>}
+    </span>
+    {winner && <Crown size={13} className="bracket-crown" aria-label="Winner" />}
+  </div>
+);
+
+const TournamentsScreen = ({ userId, notify, onEnterMatch, onExit }) => {
+  const uidRef = useRef(userId);
+  useEffect(() => { uidRef.current = userId; }, [userId]);
+  const lobbyAbortRef = useRef(null);
+
+  const [lobby, setLobby] = useState([]);
+  const [counts, setCounts] = useState(EMPTY_COUNTS);
+  const [lobbyLoading, setLobbyLoading] = useState(true);
+  const [lobbyError, setLobbyError] = useState('');
+  const [detailId, setDetailId] = useState(null);
+  const [detail, setDetail] = useState(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState('');
+  const [busy, setBusy] = useState('');
+
+  const sameUser = (id) => userId != null && String(id ?? '') === String(userId);
+
+  const loadLobby = useCallback(async (signal) => {
+    const uid = uidRef.current;
+    if (!uid) return;
+    if (!signal) {
+      if (lobbyAbortRef.current) lobbyAbortRef.current.abort();
+      const controller = new AbortController();
+      lobbyAbortRef.current = controller;
+      signal = controller.signal;
+    }
+    setLobbyLoading(true);
+    setLobbyError('');
+    try {
+      const { data } = await api.get('/api/tournaments', { signal });
+      if (signal.aborted || uidRef.current !== uid) return;
+      setLobby(Array.isArray(data && data.tournaments) ? data.tournaments : []);
+      setCounts({ ...EMPTY_COUNTS, ...(data && data.counts) });
+    } catch (error) {
+      if (error && (error.code === 'ERR_CANCELED' || signal.aborted || uidRef.current !== uid)) return;
+      setLobbyError('Could not load tournaments. Check your connection and try again.');
+    } finally {
+      if (!signal.aborted && uidRef.current === uid) setLobbyLoading(false);
+    }
+  }, []);
+
+  // Load the lobby on activation and when the identity changes; the cleanup
+  // aborts any in-flight GET (lobby or a superseding manual refresh).
+  useEffect(() => {
+    if (!userId) return undefined;
+    setLobby([]);
+    setCounts(EMPTY_COUNTS);
+    setLobbyError('');
+    setDetailId(null);
+    setDetail(null);
+    setDetailLoading(false);
+    setDetailError('');
+    setBusy('');
+    const controller = new AbortController();
+    lobbyAbortRef.current = controller;
+    loadLobby(controller.signal);
+    return () => {
+      controller.abort();
+      if (lobbyAbortRef.current && lobbyAbortRef.current !== controller) lobbyAbortRef.current.abort();
+    };
+  }, [userId, loadLobby]);
+
+  const tournament = detail ? detail.tournament : null;
+  const tournamentStatus = tournament && tournament.status;
+  const flatMatches = useMemo(() => {
+    if (!detail || !Array.isArray(detail.matches)) return [];
+    const flat = [];
+    detail.matches.forEach((group) => {
+      if (group && Array.isArray(group.matches)) group.matches.forEach((matchRow) => flat.push(matchRow));
+    });
+    return flat;
+  }, [detail]);
+  const players = Array.isArray(detail && detail.players) ? detail.players : [];
+  const joinedCount = players.length || Number(tournament && tournament.playerCount) || 0;
+  const size = Number(tournament && tournament.size) || DEFAULT_TOURNAMENT_SIZE;
+  const participant = isTournamentParticipant(players, userId);
+  const eliminated = isEliminated(flatMatches, userId);
+  // Poll while the caller is in a live (or open-and-joined) tournament and has
+  // not been knocked out: the bracket can advance, their match can become
+  // ready, and the tournament can complete under them. Everything else (open
+  // spectator view, complete, cancelled, eliminated) is single-fetch only.
+  const shouldPoll = Boolean(detailId && participant && !eliminated
+    && (tournamentStatus === 'in_progress' || tournamentStatus === 'open'));
+
+  // Load the selected tournament immediately, then poll every 4s while the
+  // caller is still in it. Restarting on shouldPoll keeps the interval tight;
+  // unmount/identity change aborts the in-flight GET and clears the timer.
+  useEffect(() => {
+    if (!detailId || !userId) return undefined;
+    const uid = uidRef.current;
+    let alive = true;
+    const controller = new AbortController();
+    const loadDetail = async () => {
+      try {
+        const { data } = await api.get(`/api/tournaments/${encodeURIComponent(detailId)}`, { signal: controller.signal });
+        if (!alive || uidRef.current !== uid) return;
+        setDetail(data);
+        setDetailError('');
+      } catch (error) {
+        if (error && (error.code === 'ERR_CANCELED' || !alive || uidRef.current !== uid)) return;
+        setDetailError(error && error.response && error.response.status === 404
+          ? 'This tournament no longer exists.'
+          : 'Could not load the tournament — retrying…');
+      } finally {
+        if (alive && uidRef.current === uid) setDetailLoading(false);
+      }
+    };
+    setDetail(null);
+    setDetailLoading(true);
+    setDetailError('');
+    loadDetail();
+    let pollTimer = null;
+    if (shouldPoll) pollTimer = window.setInterval(loadDetail, TOURNAMENT_POLL_MS);
+    return () => {
+      alive = false;
+      controller.abort();
+      if (pollTimer !== null) window.clearInterval(pollTimer);
+    };
+  }, [detailId, userId, shouldPoll]);
+
+  const openDetail = (id) => setDetailId(id);
+  const closeDetail = () => {
+    setDetailId(null);
+    setDetail(null);
+    setDetailError('');
+    loadLobby();
+  };
+
+  const createTournament = async () => {
+    if (busy) return;
+    const uid = uidRef.current;
+    setBusy('create');
+    try {
+      const { data } = await api.post('/api/tournaments');
+      if (uidRef.current !== uid) return;
+      notify('Tournament created — you are seed 1. Players join from the lobby.', 'success');
+      if (data && data.tournament) {
+        setDetail(data);
+        setDetailId(data.tournament.id);
+      }
+    } catch (error) {
+      if (uidRef.current !== uid) return;
+      notify(tournamentHttpError(error, 'Could not create a tournament right now.'), 'error');
+      loadLobby(); // e.g. a 409 TOURNAMENT_EXISTS race: re-sync the lobby
+    } finally {
+      if (uidRef.current === uid) setBusy('');
+    }
+  };
+
+  const joinTournament = async (id) => {
+    if (busy || !id) return;
+    const uid = uidRef.current;
+    setBusy(`join:${id}`);
+    try {
+      const { data } = await api.post(`/api/tournaments/${encodeURIComponent(id)}/join`);
+      if (uidRef.current !== uid) return;
+      const started = data && data.tournament && data.tournament.status === 'in_progress';
+      notify(started
+        ? 'You joined — the bracket filled and the tournament has started!'
+        : 'Joined the tournament. It starts automatically when all 8 seats fill.', 'success');
+      setDetail(data);
+      setDetailId(id);
+      loadLobby();
+    } catch (error) {
+      if (uidRef.current !== uid) return;
+      notify(tournamentHttpError(error, 'Could not join the tournament right now.'), 'error');
+    } finally {
+      if (uidRef.current === uid) setBusy('');
+    }
+  };
+
+  // Enter-match flow: the HTTP enter endpoint materializes/idempotently
+  // returns the match room, then we drop into the SAME socket path used for
+  // private-room joins (handleJoinRoom -> join_room + enterMultiplayerRoom ->
+  // view GAME). No tournament-specific room handling exists — the room is an
+  // ordinary best-of-1 multiplayer room with both players pre-registered.
+  const enterMatch = async (matchId) => {
+    if (busy || !detailId || !matchId) return;
+    const uid = uidRef.current;
+    setBusy('enter');
+    try {
+      const { data } = await api.post(`/api/tournaments/${encodeURIComponent(detailId)}/matches/${encodeURIComponent(matchId)}/enter`);
+      if (uidRef.current !== uid) return;
+      const roomId = data && data.roomId;
+      if (!roomId) {
+        notify('The match room could not be opened. Try again.', 'error');
+        return;
+      }
+      const joinResult = await onEnterMatch(roomId);
+      if (uidRef.current !== uid) return;
+      if (joinResult && joinResult.error) {
+        // ACTIVE_ROOM_EXISTS / RATE_LIMITED are surfaced by the App-level
+        // lifecycle recovery UI; do not double-toast them here.
+        if (!['ACTIVE_ROOM_EXISTS', 'RATE_LIMITED'].includes(joinResult.code)) {
+          notify(joinResult.error || 'Could not join the match room.', 'error');
+        }
+        return;
+      }
+      notify('Match found — good luck!', 'success');
+    } catch (error) {
+      if (uidRef.current !== uid) return;
+      notify(tournamentHttpError(error, 'Could not enter the match right now. Try again.'), 'error');
+    } finally {
+      if (uidRef.current === uid) setBusy('');
+    }
+  };
+
+  const myMatchRow = flatMatches.find((matchRow) => matchRow.id === myMatchId(flatMatches, userId)) || null;
+  const myMatchReady = canEnterMatch({ tournamentStatus, match: myMatchRow, userId });
+  const myOpponent = myMatchRow && matchOpponent(myMatchRow, userId);
+  const myEnterId = myMatchRow ? myMatchRow.id : null;
+  const myReward = myTournamentReward(flatMatches, userId);
+  const finalMatch = flatMatches.find((matchRow) => Number(matchRow.round) === 3 && matchRow.status === 'complete') || null;
+  const champion = finalMatch && finalMatch.winner_id
+    ? players.find((entry) => String(entry.id ?? '') === String(finalMatch.winner_id)) || null
+    : null;
+  const myCompleted = flatMatches.filter((matchRow) => matchRow.status === 'complete'
+    && (sameUser(matchRow.player_x_id) || sameUser(matchRow.player_o_id)));
+  const lastWinRound = [...myCompleted].reverse().find((matchRow) => matchRow.winner_id != null && sameUser(matchRow.winner_id));
+  const lostRound = [...myCompleted].reverse().find((matchRow) => matchRow.winner_id != null && !sameUser(matchRow.winner_id));
+
+  // ---- Lobby (list) ----
+  const renderLobby = () => {
+    const canCreate = !counts.open && !counts.in_progress;
+    return (
+      <div className="tournaments-view">
+        <div className="tournaments-head">
+          <div>
+            <span className="page-eyebrow">8-player knockout brackets</span>
+            <h2>Tournaments</h2>
+            <p className="page-intro">Join an open tournament or create one — single-elimination with coin and gem prizes.</p>
+          </div>
+          <button type="button" className="back-btn" onClick={onExit} aria-label="Back to home">
+            <ChevronLeft size={22} />
+          </button>
+        </div>
+
+        {canCreate && !lobbyLoading && (
+          <div className="tournament-create glass">
+            <div>
+              <h3>No tournament is running right now</h3>
+              <p>Start an 8-player bracket. You are locked in as seed 1; opponents join from the lobby.</p>
+            </div>
+            <button type="button" className="btn-primary tournament-create-btn" disabled={Boolean(busy)} onClick={createTournament}>
+              {busy === 'create' ? 'Creating…' : 'Create tournament'}
+            </button>
+          </div>
+        )}
+
+        {lobbyError ? (
+          <div className="activity-state" role="alert">
+            <AlertTriangle size={18} className="activity-state-icon" />
+            <p>{lobbyError}</p>
+            <button type="button" className="btn-gray activity-retry" onClick={() => loadLobby()}>Try again</button>
+          </div>
+        ) : lobbyLoading ? (
+          <p className="activity-state" role="status">Loading tournaments…</p>
+        ) : lobby.length === 0 ? (
+          <div className="activity-state">
+            <Trophy size={18} className="activity-state-icon" />
+            <p>No tournaments yet — be the first to create a bracket.</p>
+          </div>
+        ) : (
+          <div className="tournament-list">
+            {lobby.map((row) => {
+              const rowSize = Number(row.size) || DEFAULT_TOURNAMENT_SIZE;
+              const rowCount = Number.isFinite(Number(row.playerCount)) ? Number(row.playerCount)
+                : (Array.isArray(row.players) ? row.players.length : 0);
+              const host = Array.isArray(row.players)
+                ? (row.players.find((entry) => Number(entry.seed) === 1) || row.players[0])
+                : null;
+              const joinLabel = joinButtonLabel(row, userId);
+              return (
+                <div className="tournament-row glass" key={row.id}>
+                  <button type="button" className="tournament-row-main" onClick={() => openDetail(row.id)}>
+                    <h3>{row.name || 'Tournament'}</h3>
+                    <p>
+                      <span className={`tournament-status is-${row.status}`}>{tournamentStatusLabel(row.status)}</span>
+                      <span className="tournament-row-meta">{rowCount}/{rowSize} players{host && host.username ? ` · host ${host.username}` : ''}</span>
+                    </p>
+                  </button>
+                  <div className="tournament-row-actions">
+                    {joinLabel === 'Join' && (
+                      <button type="button" className="btn-primary" disabled={Boolean(busy)} onClick={() => joinTournament(row.id)}>
+                        {busy === `join:${row.id}` ? 'Joining…' : 'Join'}
+                      </button>
+                    )}
+                    {joinLabel === 'Joined' && <button type="button" className="btn-gray" disabled>Joined</button>}
+                    {joinLabel === 'Full' && <button type="button" className="btn-gray" disabled>Full</button>}
+                    <button type="button" className="btn-gray" onClick={() => openDetail(row.id)}>View</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // ---- Detail (bracket) ----
+  const renderDetail = () => {
+    if (detailLoading && !detail) {
+      return (
+        <div className="tournaments-view">
+          <button type="button" className="back-btn" onClick={closeDetail} aria-label="Back to tournaments"><ChevronLeft size={22} /></button>
+          <p className="activity-state" role="status">Loading tournament…</p>
+        </div>
+      );
+    }
+    if (!detail) {
+      return (
+        <div className="tournaments-view">
+          <button type="button" className="back-btn" onClick={closeDetail} aria-label="Back to tournaments"><ChevronLeft size={22} /></button>
+          {detailError ? (
+            <div className="activity-state" role="alert">
+              <AlertTriangle size={18} className="activity-state-icon" />
+              <p>{detailError}</p>
+              <button type="button" className="btn-gray activity-retry" onClick={closeDetail}>Back to lobby</button>
+            </div>
+          ) : (
+            <p className="activity-state" role="status">Loading tournament…</p>
+          )}
+        </div>
+      );
+    }
+
+    const mySeed = players.find((entry) => sameUser(entry.id ?? entry.user_id));
+    const slotsLeft = Math.max(0, size - joinedCount);
+
+    return (
+      <div className="tournaments-view">
+        <div className="tournaments-head">
+          <button type="button" className="back-btn" onClick={closeDetail} aria-label="Back to tournaments"><ChevronLeft size={22} /></button>
+          <div className="tournaments-title-block">
+            <span className="page-eyebrow">Knockout bracket</span>
+            <h2>{tournament.name || 'Tournament'}</h2>
+            <p className="page-intro">
+              <span className={`tournament-status is-${tournamentStatus}`}>{tournamentStatusLabel(tournamentStatus)}</span>
+              {' '}{joinedCount}/{size} players · Prizes: champion {REWARD_TABLE.champion.coins} Coins + {REWARD_TABLE.champion.gems} Gems · runner-up {REWARD_TABLE.runnerUp.coins} Coins · semifinalists {REWARD_TABLE.semifinalist.coins} Coins
+            </p>
+          </div>
+        </div>
+
+        {/* Call-to-action / status band */}
+        {tournamentStatus === 'open' && !participant && (
+          <div className="tournament-cta glass">
+            <div>
+              <h3>Join this tournament</h3>
+              <p>{slotsLeft > 0 ? `${slotsLeft} seat${slotsLeft === 1 ? '' : 's'} left — it starts automatically when the bracket is full.` : 'The bracket is full — check back when it starts.'}</p>
+            </div>
+            {slotsLeft > 0 && (
+              <button type="button" className="btn-primary" disabled={Boolean(busy)} onClick={() => joinTournament(detailId)}>
+                {busy === `join:${detailId}` ? 'Joining…' : 'Join tournament'}
+              </button>
+            )}
+          </div>
+        )}
+        {tournamentStatus === 'open' && participant && (
+          <div className="tournament-cta glass">
+            <h3>{mySeed ? `You are seed ${mySeed.seed} of ${size}` : 'You are in this tournament'}</h3>
+            <p>Waiting for {slotsLeft} more {slotsLeft === 1 ? 'player' : 'players'} to join before the bracket starts.</p>
+          </div>
+        )}
+        {tournamentStatus === 'in_progress' && eliminated && (
+          <div className="tournament-cta glass is-eliminated">
+            <h3>{lostRound ? `Eliminated in the ${roundLabel(lostRound.round)}` : 'Eliminated'}</h3>
+            <p>The bracket continues without you — stick around to watch the final.</p>
+          </div>
+        )}
+        {tournamentStatus === 'in_progress' && !eliminated && myMatchReady && (
+          <div className="tournament-cta glass is-match">
+            <div>
+              <h3>{myMatchRow.status === 'waiting' ? 'Waiting for your match' : 'Your match is live'}</h3>
+              <p>
+                {myMatchRow.status === 'waiting'
+                  ? 'Enter to take your seat — the match begins as soon as your opponent arrives.'
+                  : myOpponent ? `vs ${myOpponent.username} — your opponent is in the room.` : 'Your opponent is in the room.'}
+              </p>
+            </div>
+            <button type="button" className="btn-primary tournament-enter-btn" disabled={Boolean(busy)} onClick={() => { if (myEnterId) enterMatch(String(myEnterId)); }}>
+              {busy === 'enter' ? 'Entering…' : 'Enter match'}
+            </button>
+          </div>
+        )}
+        {tournamentStatus === 'in_progress' && !eliminated && !myMatchReady && lastWinRound && (
+          <div className="tournament-cta glass is-advance">
+            <h3>You won the {roundLabel(lastWinRound.round)}{lastWinRound.round < 3 ? ` — the ${roundLabel(lastWinRound.round + 1)} starts when the round completes.` : ''}</h3>
+            <p>This page refreshes automatically — stand by.</p>
+          </div>
+        )}
+        {tournamentStatus === 'complete' && champion && (
+          <div className="tournament-cta glass is-champion">
+            <div className="tournament-champion-line">
+              <Crown size={20} />
+              <h3>Tournament complete — {champion.username || 'the champion'} takes the crown!</h3>
+            </div>
+            {myReward && (
+              <p className="tournament-my-reward">
+                {myReward.placement === 'champion' ? 'You are the champion' : myReward.placement === 'runnerUp' ? 'You are the runner-up' : 'You reached the semifinals'}
+                {' — '}earned +{myReward.coins} Coins{myReward.gems > 0 ? ` + ${myReward.gems} Gems` : ''}.
+              </p>
+            )}
+          </div>
+        )}
+        {tournamentStatus === 'cancelled' && (
+          <div className="tournament-cta glass">
+            <h3>This tournament was cancelled</h3>
+            <p>No prizes were awarded. Check the lobby for a fresh bracket.</p>
+          </div>
+        )}
+
+        {/* Standings / seeds */}
+        <div className="tournament-seeds glass">
+          <h3>Players</h3>
+          <div className="tournament-seed-list">
+            {Array.from({ length: size }, (_, index) => {
+              const entry = players.find((candidate) => Number(candidate.seed) === index + 1);
+              if (!entry) {
+                return (
+                  <div className="tournament-seed is-empty" key={`empty-${index + 1}`}>
+                    <span className="tournament-seed-num">{index + 1}</span>
+                    <span className="tournament-seed-empty">Open seat</span>
+                  </div>
+                );
+              }
+              const isChamp = champion && String(entry.id ?? '') === String(champion.id);
+              return (
+                <div className={`tournament-seed${isChamp ? ' is-champion' : ''}${sameUser(entry.id ?? entry.user_id) ? ' is-me' : ''}`} key={entry.id}>
+                  <span className="tournament-seed-num">{entry.seed}</span>
+                  <img src={entry.avatar || fallbackAvatar(entry.username)} alt={`${entry.username || 'Player'} avatar`} />
+                  <span className="tournament-seed-name">{entry.username || 'Player'}{sameUser(entry.id ?? entry.user_id) ? ' (you)' : ''}</span>
+                  {isChamp && <Crown size={12} aria-label="Champion" />}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Bracket by round */}
+        {flatMatches.length > 0 && (
+          <div className="bracket">
+            {detail.matches.map((group) => {
+              const roundMatches = Array.isArray(group.matches) ? group.matches : [];
+              const doneCount = roundMatches.filter((matchRow) => matchRow.status === 'complete').length;
+              return (
+                <section className="bracket-round" key={group.round}>
+                  <div className="bracket-round-head">
+                    <h3>{roundLabel(group.round)}</h3>
+                    <span className="bracket-round-meta">
+                      {doneCount}/{roundMatches.length} settled
+                      {roundMatches.some((matchRow) => myMatchId([matchRow], userId) !== null) ? ' · includes you' : ''}
+                    </span>
+                  </div>
+                  <div className="bracket-round-matches">
+                    {roundMatches.map((matchRow) => {
+                      const involvesMe = sameUser(matchRow.player_x_id) || sameUser(matchRow.player_o_id);
+                      const xWon = matchRow.status === 'complete' && matchRow.winner_id != null && String(matchRow.winner_id) === String(matchRow.player_x_id ?? '');
+                      const oWon = matchRow.status === 'complete' && matchRow.winner_id != null && String(matchRow.winner_id) === String(matchRow.player_o_id ?? '');
+                      const xLost = matchRow.status === 'complete' && matchRow.winner_id != null && matchRow.player_x_id != null && String(matchRow.winner_id) !== String(matchRow.player_x_id);
+                      const oLost = matchRow.status === 'complete' && matchRow.winner_id != null && matchRow.player_o_id != null && String(matchRow.winner_id) !== String(matchRow.player_o_id);
+                      return (
+                        <div className={`bracket-match glass${involvesMe ? ' involves-me' : ''}${matchRow.status === 'waiting' ? ' is-waiting' : ''}`} key={matchRow.id}>
+                          <div className="bracket-match-top">
+                            <span className="bracket-match-label">Match {matchRow.pairing}</span>
+                            <span className={`tournament-status is-${matchRow.status}`}>{matchStatusLabel(matchRow.status)}</span>
+                          </div>
+                          <BracketPlayer
+                            userId={userId}
+                            id={matchRow.player_x_id}
+                            username={matchRow.player_x_username}
+                            avatar={matchRow.player_x_avatar}
+                            winner={xWon}
+                            loser={xLost && !xWon}
+                          />
+                          <div className="bracket-vs">vs</div>
+                          <BracketPlayer
+                            userId={userId}
+                            id={matchRow.player_o_id}
+                            username={matchRow.player_o_username}
+                            avatar={matchRow.player_o_avatar}
+                            winner={oWon}
+                            loser={oLost && !oWon}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return detailId ? renderDetail() : renderLobby();
+};
+
 // --- Main App ---
 
 export default function App() {
@@ -2822,6 +3374,14 @@ export default function App() {
                   <span className="mode-copy"><strong>Train against AI</strong><small>Choose your board and difficulty, then sharpen your game.</small></span>
                   <span className="mode-arrow">→</span>
                 </button>
+                <button
+                  className="btn-primary tournaments"
+                  onClick={() => setView('TOURNAMENTS')}
+                >
+                  <span className="mode-icon"><Trophy size={22} /></span>
+                  <span className="mode-copy"><strong>Enter Tournaments</strong><small>8-player knockout brackets with coin and gem prizes.</small></span>
+                  <span className="mode-arrow">↗</span>
+                </button>
               </div>
               <div className="home-status">
                 <span className="status-online">Realtime service online</span>
@@ -3020,6 +3580,26 @@ export default function App() {
             </motion.div>
           )}
 
+
+          {view === 'TOURNAMENTS' && (
+            <motion.div
+              key="tournaments"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              className="tournaments-screen"
+            >
+              <TournamentsScreen
+                userId={user.id}
+                notify={notify}
+                onEnterMatch={handleJoinRoom}
+                onExit={() => {
+                  setActiveTab('home');
+                  setView('HOME');
+                }}
+              />
+            </motion.div>
+          )}
 
           {view === 'AI_CONFIG' && (
             <motion.div
