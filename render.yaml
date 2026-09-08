@@ -22,6 +22,10 @@ services:
         value: "30"
       - key: ROOM_ACTION_RATE_WINDOW_MS
         value: "60000"
+      - key: CHAT_RATE_LIMIT
+        value: "12"
+      - key: CHAT_RATE_WINDOW_MS
+        value: "30000"
       - key: GOOGLE_CLIENT_ID
         value: 973570557279-9mqjj9oep3qra3r86696p8c6j31bb7dr.apps.googleusercontent.com
       - key: VITE_GOOGLE_CLIENT_ID

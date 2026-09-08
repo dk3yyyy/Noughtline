@@ -150,6 +150,12 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
     limit: config.roomActionRateLimit,
     windowMs: config.roomActionRateWindowMs,
   });
+  // Room chat is a notification channel, not a game action: it gets its own
+  // limiter so chatter can never crowd out leave_room/lifecycle room actions.
+  const chatLimiter = new ActionRateLimiter({
+    limit: config.chatRateLimit,
+    windowMs: config.chatRateWindowMs,
+  });
   const app = express();
   const server = http.createServer(app);
   const io = new Server(server, {
@@ -518,6 +524,41 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
       return callback?.(result);
     });
 
+    const chatError = (result, callback) => {
+      callback?.(gameErrorPayload(result));
+      return result;
+    };
+
+    socket.on('chat_message', ({ roomId, text } = {}, callback) => {
+      const chatLimit = chatLimiter.consume(`chat:${socket.user.id}`);
+      if (!chatLimit.allowed) {
+        return chatError({
+          error: 'You are chatting too quickly. Try again shortly.',
+          code: 'CHAT_RATE_LIMITED',
+          retryAfterMs: chatLimit.retryAfterMs,
+        }, callback);
+      }
+      const room = typeof roomId === 'string' && roomId.trim() ? roomManager.getRoom(roomId) : null;
+      if (!room) return chatError({ error: 'Room not found', code: 'ROOM_NOT_FOUND' }, callback);
+      const player = room.players.find((entry) => entry.id === socket.user.id && entry.connected && entry.socketId === socket.id);
+      if (!player) return chatError({ error: 'Player is not in this room', code: 'NOT_ROOM_MEMBER' }, callback);
+      if (typeof text !== 'string') return chatError({ error: 'Invalid chat message', code: 'CHAT_INVALID' }, callback);
+      const trimmed = text.trim();
+      if (!trimmed) return chatError({ error: 'Message cannot be empty', code: 'CHAT_EMPTY' }, callback);
+      if (trimmed.length > 240) return chatError({ error: 'Message is too long (max 240 characters)', code: 'CHAT_TOO_LONG' }, callback);
+      const id = crypto.randomUUID();
+      io.to(room.id).emit('chat_message', {
+        roomId: room.id,
+        id,
+        userId: socket.user.id,
+        username: player.username || socket.user.username,
+        avatar: player.avatar || socket.user.avatar,
+        text: trimmed,
+        at: Date.now(),
+      });
+      return callback?.({ ok: true, id });
+    });
+
     socket.on('make_move', ({ roomId, index } = {}, callback) => runGameAction(() => roomManager.makeMove(roomId, index, socket.user.id, socket.id), callback));
     socket.on('ready_next_round', ({ roomId } = {}, callback) => runGameAction(() => roomManager.readyForNextRound(roomId, socket.user.id, socket.id), callback));
     socket.on('request_rematch', ({ roomId } = {}, callback) => runGameAction(() => roomManager.requestRematch(roomId, socket.user.id, socket.id), callback));
@@ -587,6 +628,7 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
       for (const player of matchmaker.expiredPlayers(15_000)) io.to(player.socketId).emit('match_fallback_ai');
       for (const result of roomManager.resolveDisconnectTimeouts()) io.to(result.roomId).emit('room_update', result.room);
       roomActionLimiter.prune();
+      chatLimiter.prune();
       googleAuth.pruneNonces();
       roomManager.removeExpired();
     }, 1000));
