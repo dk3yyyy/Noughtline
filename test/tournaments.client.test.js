@@ -9,6 +9,7 @@ import {
   matchOpponent,
   matchStatusLabel,
   myMatchId,
+  nextMatchForPlayer,
   myTournamentReward,
   roundLabel,
   tournamentStatusLabel,
@@ -188,4 +189,50 @@ test('isEliminated is true only after a completed, lost match involving the user
   assert.equal(isEliminated([], ALICE), false);
   assert.equal(isEliminated(null, ALICE), false);
   assert.equal(isEliminated([lost], null), false);
+});
+
+test('nextMatchForPlayer prefers the caller\'s unresolved match over an earlier settled round', () => {
+  // The regression: ALICE won the quarterfinal (m1 complete); the semifinal
+  // (m2) now exists and is waiting. myMatchId returns m1 (first in list), which
+  // stranded advancing players on the "You won the Quarterfinals" state and
+  // never surfaced the Enter button. nextMatchForPlayer must return m2.
+  const flat = [
+    match({ id: 'm1', round: 1, player_x_id: ALICE, player_o_id: BOB, winner_id: ALICE, status: 'complete' }),
+    match({ id: 'm2', round: 2, player_x_id: ALICE, player_o_id: CAROL, winner_id: null, status: 'waiting' }),
+  ];
+  assert.equal(nextMatchForPlayer(flat, ALICE).id, 'm2');
+  assert.equal(nextMatchForPlayer(flat, CAROL).id, 'm2');
+});
+
+test('nextMatchForPlayer treats an active match as playable too', () => {
+  const flat = [
+    match({ id: 'm1', round: 1, player_x_id: ALICE, player_o_id: BOB, winner_id: ALICE, status: 'complete' }),
+    match({ id: 'm2', round: 2, player_x_id: ALICE, player_o_id: CAROL, status: 'active' }),
+  ];
+  assert.equal(nextMatchForPlayer(flat, ALICE).id, 'm2');
+  assert.equal(nextMatchForPlayer(flat, CAROL).id, 'm2');
+});
+
+test('nextMatchForPlayer falls back to the earliest seat between rounds (parity with myMatchId)', () => {
+  // Between rounds the caller has no unresolved match yet: still locate their
+  // completed round-1 seat so CTA state ("won the quarterfinals, stand by")
+  // has a match to render from.
+  const onlyWonQf = match({ id: 'm1', round: 1, player_x_id: ALICE, player_o_id: BOB, winner_id: ALICE, status: 'complete' });
+  assert.equal(nextMatchForPlayer([onlyWonQf], ALICE).id, 'm1');
+  // A caller eliminated in round 1 also resolves to their lost match.
+  const onlyLostQf = match({ id: 'm1', round: 1, player_x_id: ALICE, player_o_id: BOB, winner_id: BOB, status: 'complete' });
+  assert.equal(nextMatchForPlayer([onlyLostQf], ALICE).id, 'm1');
+});
+
+test('nextMatchForPlayer handles grouped detail payloads and null inputs', () => {
+  const grouped = {
+    matches: [
+      { round: 1, matches: [match({ id: 'm1', round: 1, player_x_id: ALICE, player_o_id: BOB, winner_id: ALICE, status: 'complete' })] },
+      { round: 2, matches: [match({ id: 'm2', round: 2, player_x_id: ALICE, player_o_id: CAROL, status: 'waiting' })] },
+    ],
+  };
+  assert.equal(nextMatchForPlayer(grouped, ALICE).id, 'm2');
+  assert.equal(nextMatchForPlayer([], ALICE), null);
+  assert.equal(nextMatchForPlayer(null, ALICE), null);
+  assert.equal(nextMatchForPlayer([match()], null), null);
 });

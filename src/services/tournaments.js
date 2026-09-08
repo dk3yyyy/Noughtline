@@ -89,6 +89,22 @@ export function myMatchId(matches, userId) {
   return found ? found.id : null;
 }
 
+// The caller's next *playable* match: the first match they are slotted into
+// that is still waiting or active. myMatchId alone is not enough after a win —
+// it returns the earliest round the caller appears in (their completed round-1
+// match), which would keep the Enter action pointing at a settled match and
+// strand advancing players. Falls back to myMatchId when nothing is
+// unresolved (e.g. between rounds), so callers can still locate their seat.
+export function nextMatchForPlayer(matches, userId) {
+  if (userId == null) return null;
+  const list = asMatchList(matches);
+  const unresolved = list.find((entry) => (entry.status === 'waiting' || entry.status === 'active')
+    && (sameUser(entry.player_x_id, userId) || sameUser(entry.player_o_id, userId)));
+  if (unresolved) return unresolved;
+  const found = list.find((entry) => sameUser(entry.player_x_id, userId) || sameUser(entry.player_o_id, userId));
+  return found || null;
+}
+
 // { username, avatar } of the opponent in a match row, or null when the
 // caller is not a participant or the opponent slot is empty.
 export function matchOpponent(match, userId) {
