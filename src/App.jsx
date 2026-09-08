@@ -160,19 +160,19 @@ const SettingsModal = ({ show, onClose, config, setConfig, onExport, onDelete, o
           </div>
           <div className="theme-seg" role="group" aria-label="Theme">
             {[
-              { value: 'system', label: 'System', Icon: Monitor },
-              { value: 'light', label: 'Light', Icon: Sun },
-              { value: 'dark', label: 'Dark', Icon: Moon },
-            ].map(({ value, label, Icon }) => (
+              { value: 'system', label: 'System', icon: Monitor },
+              { value: 'light', label: 'Light', icon: Sun },
+              { value: 'dark', label: 'Dark', icon: Moon },
+            ].map((option) => (
               <button
                 type="button"
-                key={value}
-                className={`theme-seg-btn${config.theme === value ? ' is-active' : ''}`}
-                aria-pressed={config.theme === value}
-                onClick={() => setConfig(p => ({ ...p, theme: value }))}
+                key={option.value}
+                className={`theme-seg-btn${config.theme === option.value ? ' is-active' : ''}`}
+                aria-pressed={config.theme === option.value}
+                onClick={() => setConfig(p => ({ ...p, theme: option.value }))}
               >
-                <Icon size={15} />
-                {label}
+                <option.icon size={15} />
+                {option.label}
               </button>
             ))}
           </div>
