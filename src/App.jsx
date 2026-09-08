@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { api, adoptSessionToken, clearSession, ensureSession, getSocket, logoutSession } from './services/client';
 import { clearActiveRoom, createInviteUrl, getInviteRoomId, normalizeRoomId, readActiveRoom, saveActiveRoom } from './services/rooms';
+import { chatErrorText, formatChatTime, isOwnMessage, MAX_CHAT_LENGTH, pushChatMessage, validateChatInput } from './services/chat';
 import { mergeToast } from './services/toasts';
 import { dateText, friendlyLedgerReason, outcomeFor, scoreText, signedAmount } from './services/history';
 import { canClaimQuest, DAILY_REWARD, dailyRewardCopy, questComplete, questProgressLabel, rewardLabel } from './services/quests';
@@ -41,7 +42,10 @@ import {
   Wallet,
   Gift,
   Gauge,
-  LogOut
+  LogOut,
+  MessageSquare,
+  Send,
+  X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import confetti from 'canvas-confetti';
@@ -1503,6 +1507,224 @@ const useTicTacToe = (gameConfig, setGameConfig, sounds, user) => {
   };
 };
 
+// --- Room Chat (multiplayer GAME view) ---
+
+// Ephemeral per-room messenger shown inside the multiplayer GAME view. The
+// server broadcasts every accepted message back to the room (sender included)
+// and keeps no history, so the list is fed purely by 'chat_message' events,
+// deduped by id and capped at MAX_CHAT_MESSAGES. Because the panel only
+// mounts while a multiplayer room is active, leaving the room (roomId -> null)
+// unmounts it and tears the listener down — stale broadcasts from a previous
+// room can never be appended.
+const RoomChat = ({ roomId, userId, notify }) => {
+  const [open, setOpen] = useState(false);
+  const [messages, setMessages] = useState([]);
+  const [draft, setDraft] = useState('');
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState('');
+  const [chatDisabled, setChatDisabled] = useState(false);
+  const [rateLimitUntil, setRateLimitUntil] = useState(null);
+  const [rateLeftSec, setRateLeftSec] = useState(0);
+  const seenIdsRef = useRef(new Set());
+  const listRef = useRef(null);
+  const inputRef = useRef(null);
+  const justOpenedRef = useRef(false);
+
+  // Room changed or chat left: drop all transient state so a new room never
+  // inherits the previous room's messages, draft, or errors.
+  useEffect(() => {
+    setMessages([]);
+    seenIdsRef.current = new Set();
+    setDraft('');
+    setSending(false);
+    setSendError('');
+    setChatDisabled(false);
+    setRateLimitUntil(null);
+    setRateLeftSec(0);
+    setOpen(false);
+  }, [roomId]);
+
+  // Bind the room chat listener for the current room only. Events for other
+  // rooms (or replays of the same id) are ignored.
+  useEffect(() => {
+    if (!roomId) return undefined;
+    const handleChatMessage = (message) => {
+      if (!message || message.roomId !== roomId) return;
+      if (message.id !== null && message.id !== undefined && seenIdsRef.current.has(message.id)) return;
+      setMessages(current => pushChatMessage(current, message, seenIdsRef.current).messages);
+    };
+    socket.on('chat_message', handleChatMessage);
+    return () => { socket.off('chat_message', handleChatMessage); };
+  }, [roomId]);
+
+  // Count down the server rate-limit retry window (CHAT_RATE_LIMITED ack).
+  useEffect(() => {
+    if (rateLimitUntil === null) return undefined;
+    const update = () => {
+      const left = Math.max(0, Math.ceil((rateLimitUntil - Date.now()) / 1000));
+      setRateLeftSec(left);
+      if (left === 0) setRateLimitUntil(null);
+    };
+    update();
+    const timer = window.setInterval(update, 250);
+    return () => window.clearInterval(timer);
+  }, [rateLimitUntil]);
+
+  // A mid-flight disconnect may never deliver an ack: never leave the send
+  // button stuck disabled.
+  useEffect(() => {
+    const onDisconnect = () => setSending(false);
+    socket.on('disconnect', onDisconnect);
+    return () => { socket.off('disconnect', onDisconnect); };
+  }, []);
+
+  // Focus the composer when the panel opens (and let the auto-scroll below
+  // know this is a fresh open, not a follow-on append while reading history).
+  useEffect(() => {
+    justOpenedRef.current = open;
+    if (open && inputRef.current) inputRef.current.focus();
+  }, [open]);
+
+  // Auto-scroll to the newest message when open — unless the player has
+  // scrolled up to read older messages, in which case leave them alone.
+  useEffect(() => {
+    const el = listRef.current;
+    if (!open || !el) return;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 140;
+    if (nearBottom || justOpenedRef.current) el.scrollTop = el.scrollHeight;
+    justOpenedRef.current = false;
+  }, [messages, open]);
+
+  const sendMessage = () => {
+    if (sending || rateLimitUntil !== null) return;
+    if (!socket.connected) {
+      setSendError('Reconnect to Noughtline before sending.');
+      return;
+    }
+    const validated = validateChatInput(draft);
+    if (!validated.ok) {
+      // Instant client-side feedback; the draft is kept so it can be edited.
+      setSendError(chatErrorText(validated.code));
+      return;
+    }
+    setSending(true);
+    setSendError('');
+    socket.timeout(8_000).emit('chat_message', { roomId, text: validated.text }, (timeoutError, ack) => {
+      setSending(false);
+      if (timeoutError) {
+        setSendError('Your message did not send. Check the connection and try again.');
+        return;
+      }
+      if (ack?.ok) {
+        // The broadcast echo (sender included) feeds the list; the ack only
+        // confirms delivery, so nothing is appended here.
+        setDraft('');
+        return;
+      }
+      if (ack?.code === 'CHAT_RATE_LIMITED') {
+        const retryMs = Math.max(1000, Number(ack.retryAfterMs) || 0);
+        setRateLimitUntil(Date.now() + retryMs);
+        return;
+      }
+      if (ack?.code === 'ROOM_NOT_FOUND' || ack?.code === 'NOT_ROOM_MEMBER') {
+        setChatDisabled(true);
+        setSendError('You are no longer in this room, so chat is turned off.');
+        notify('Room chat is unavailable.', 'info');
+        return;
+      }
+      setSendError(chatErrorText(ack?.code) || ack?.error || 'Message could not be sent.');
+    });
+  };
+
+  const inputBlocked = chatDisabled || !socket.connected;
+  const sendBlocked = sending || inputBlocked || rateLimitUntil !== null || !draft.trim();
+
+  return (
+    <section className="room-chat" aria-label="Room chat">
+      {open ? (
+        <div id="room-chat-panel" className="room-chat-panel glass">
+          <div className="room-chat-header">
+            <span className="room-chat-title"><MessageSquare size={15} aria-hidden="true" /> Room chat</span>
+            <span className="room-chat-room" title="Room code">{roomId}</span>
+            <button type="button" className="room-chat-close" aria-label="Close chat" onClick={() => setOpen(false)}>
+              <X size={16} aria-hidden="true" />
+            </button>
+          </div>
+
+          <div className="room-chat-messages" ref={listRef} role="log" aria-label="Messages in this room">
+            {messages.length === 0 ? (
+              <p className="room-chat-empty">
+                No messages yet. Chat is ephemeral — only players in this room right now can read it.
+              </p>
+            ) : messages.map((message, index) => {
+              const own = isOwnMessage(message, userId);
+              return (
+                <div key={message.id ?? index} className={`room-chat-msg${own ? ' own' : ''}`}>
+                  <div className="room-chat-msg-meta">
+                    <span className="room-chat-sender">{own ? 'You' : (message.username || 'Player')}</span>
+                    <time className="room-chat-time">{formatChatTime(message.at)}</time>
+                  </div>
+                  <p className="room-chat-text">{message.text}</p>
+                </div>
+              );
+            })}
+          </div>
+
+          {(rateLimitUntil !== null || sendError) && (
+            <p className="room-chat-error" role="alert">
+              {rateLimitUntil !== null ? `Slow down — try again in ${rateLeftSec}s.` : sendError}
+            </p>
+          )}
+
+          <div className="room-chat-input-row">
+            <input
+              ref={inputRef}
+              type="text"
+              className="room-chat-input"
+              value={draft}
+              maxLength={MAX_CHAT_LENGTH}
+              placeholder={inputBlocked ? 'Chat unavailable' : 'Type a message…'}
+              aria-label="Chat message"
+              disabled={inputBlocked}
+              onChange={(event) => {
+                setDraft(event.target.value);
+                if (sendError) setSendError('');
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  sendMessage();
+                }
+              }}
+            />
+            <button
+              type="button"
+              className="room-chat-send"
+              aria-label="Send message"
+              disabled={sendBlocked}
+              onClick={sendMessage}
+            >
+              <Send size={16} aria-hidden="true" />
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          className="room-chat-toggle"
+          aria-expanded={open}
+          aria-controls="room-chat-panel"
+          onClick={() => setOpen(true)}
+        >
+          <MessageSquare size={15} aria-hidden="true" />
+          <span>Room chat</span>
+          {messages.length > 0 && <span className="room-chat-count">{messages.length}</span>}
+        </button>
+      )}
+    </section>
+  );
+};
+
 // --- Main App ---
 
 export default function App() {
@@ -2935,6 +3157,13 @@ export default function App() {
                 )}
                 {gameStatus === 'cancelled' && (
                   <button className="btn-primary" onClick={handleAcknowledgeTerminalRoom}>Return home</button>
+                )}
+                {gameConfig.mode === 'multiplayer' && gameConfig.roomId && (
+                  <RoomChat
+                    roomId={gameConfig.roomId}
+                    userId={user.id}
+                    notify={notify}
+                  />
                 )}
               </div>
 
