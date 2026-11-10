@@ -239,6 +239,12 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
 
   app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
 
+  // Public capability flags. Lets the client tell an unconfigured payment
+  // environment (fail-closed) apart from a broken checkout before offering it.
+  app.get('/api/config', (_req, res) => {
+    res.json({ payments: { configured: Boolean(config.paystackSecretKey) } });
+  });
+
   app.post('/api/auth/guest', (req, res) => {
     const user = createGuest(db);
     res.status(201).json({ token: auth.signUser(user), user: publicUser(user) });

@@ -37,13 +37,13 @@ export const validateChatInput = (raw) => {
 
 // True when the message was authored by the given user id. Guards malformed
 // input so callers can pass `user.id` unconditionally.
-export const isOwnMessage = (message, userId) => (
-  Boolean(message)
-  && typeof userId === 'string'
-  && userId.length > 0
-  && typeof message.userId === 'string'
-  && message.userId === userId
-);
+export const isOwnMessage = (message, userId) => {
+  if (!message || userId === null || userId === undefined) return false;
+  if (message.userId === null || message.userId === undefined) return false;
+  // Account ids are SQLite integers, but older payloads and tests use strings:
+  // compare their canonical text so "You" is correct for either.
+  return String(message.userId) === String(userId);
+};
 
 // Short local 24h clock label (HH:MM) for a chat timestamp. Accepts a ms
 // epoch, an ISO string, or a Date; returns '' for anything unparseable.
