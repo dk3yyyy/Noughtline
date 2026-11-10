@@ -69,6 +69,17 @@ function expectNoChat(socket, waitMs = 150) {
   });
 }
 
+test('malformed payloads and non-function acknowledgements cannot crash the socket server', async (t) => {
+  const { sockets } = await boot(t, { clients: 1 });
+  const [socket] = sockets;
+  socket.emit('chat_message', null, 'not-a-function');
+  socket.emit('join_room', 'not-an-object', 42);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(socket.connected, true);
+  const created = await emitAckWithin(socket, 'create_room', { roomId: 'ROOM_AFTER_BAD_PACKET', config: { size: 3, rounds: 1 } });
+  assert.equal(created.room.id, 'ROOM_AFTER_BAD_PACKET');
+});
+
 test('chat_message from a room member acks ok and broadcasts to every member', async (t) => {
   const { sessions, sockets } = await boot(t, { clients: 2 });
   const [first, second] = sessions;

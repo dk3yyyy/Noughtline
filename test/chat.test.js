@@ -44,6 +44,9 @@ test('maps chat error codes to short inline copy', () => {
 test('flags messages sent by the current user only', () => {
   assert.equal(isOwnMessage({ userId: 'user-1', text: 'hi' }, 'user-1'), true);
   assert.equal(isOwnMessage({ userId: 'user-1', text: 'hi' }, 'user-2'), false);
+  assert.equal(isOwnMessage({ userId: 7, text: 'hi' }, 7), true);
+  assert.equal(isOwnMessage({ userId: 7, text: 'hi' }, '7'), true);
+  assert.equal(isOwnMessage({ userId: 7, text: 'hi' }, 8), false);
   assert.equal(isOwnMessage({ userId: 'user-1', text: 'hi' }, undefined), false);
   assert.equal(isOwnMessage(null, 'user-1'), false);
   assert.equal(isOwnMessage(undefined, 'user-1'), false);

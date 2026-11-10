@@ -28,7 +28,7 @@ Noughtline combines React, Express, Socket.IO, and SQLite to deliver authenticat
 
 The browser does not choose a UUID or submit its own reward/payment amount. `POST /api/auth/guest` creates an account on the server and returns a signed access token. Protected REST endpoints and Socket.IO connections derive the player from that token.
 
-Production requires a strong `JWT_SECRET`. Startup fails if it is missing. CORS is allowlisted, request sizes are limited, REST requests are rate-limited, and security headers are enabled.
+A strong `JWT_SECRET` is required in every non-test environment. Startup fails if it is missing, shorter than 32 characters, or still the example placeholder. CORS is allowlisted, request sizes are limited, REST requests are rate-limited, and security headers are enabled.
 
 Paid Gems fail closed when `PAYSTACK_SECRET_KEY` is absent. A balance is credited only after the server verifies the Paystack reference, NGN amount, currency and success state. The same reference can be credited only once.
 
@@ -52,7 +52,7 @@ Change rewards in the server settlement policy, not in the React client.
 
 ## 🚀 Run locally
 
-Requirements: Node.js 22+ and npm.
+Requirements: Node.js 22.12 through 25 and npm.
 
 ```bash
 git clone https://github.com/dk3yyyy/Noughtline.git
@@ -62,7 +62,7 @@ npm ci --prefix server
 cp server/.env.example server/.env
 ```
 
-For local development, replace `JWT_SECRET` in `server/.env` with a random value. Paid currency remains disabled when the Paystack key is blank.
+For local development, replace `JWT_SECRET` in `server/.env` with a random value of at least 32 characters. Paid currency remains disabled when the Paystack key is blank.
 
 ```bash
 npm run dev:all
@@ -78,7 +78,9 @@ npm run dev:all
 npm run lint
 npm test
 npm run build
-E2E_BASE_URL=http://127.0.0.1:3000 npm run test:e2e
+# Start the built app in another shell first; use any free port.
+PORT=3100 JWT_SECRET=<32+-character-secret> STATIC_DIR="$PWD/dist" npm run server
+E2E_BASE_URL=http://127.0.0.1:3100 CHROMIUM_BIN="$(command -v google-chrome || command -v chromium)" npm run test:e2e
 npm audit --omit=dev
 npm audit --prefix server --omit=dev
 ```
@@ -89,7 +91,7 @@ The tests cover unauthenticated route rejection, removal of the fake deposit pat
 
 Before deployment:
 
-1. Set a strong `JWT_SECRET`, exact `CORS_ORIGINS`, production `PUBLIC_APP_URL`, persistent `DATABASE_PATH`, the Paystack secret and the Google OAuth client ID (`GOOGLE_CLIENT_ID`).
+1. Set a strong `JWT_SECRET`, exact `CORS_ORIGINS`, production `PUBLIC_APP_URL`, a persistent `DATABASE_PATH` such as `/var/data/noughtline.db`, the Paystack secret and the Google OAuth client ID (`GOOGLE_CLIENT_ID`). See [`docs/render-persistent-storage.md`](docs/render-persistent-storage.md) for the Render disk setup.
 2. Configure the Paystack webhook to `POST /api/payments/paystack/webhook`.
 3. Point `GOOGLE_CLIENT_ID` at a Google Cloud OAuth 2.0 client (Web application type, authorized JavaScript origins set to the app origin) so players can link a verified email and buy Gems.
 4. Put the service behind TLS and a trusted reverse proxy.

@@ -155,7 +155,7 @@ export function myTournamentReward(matches, userId) {
     && (sameUser(entry.player_x_id, userId) || sameUser(entry.player_o_id, userId)));
   if (final) {
     if (final.status !== 'complete' || final.winner_id == null) return null;
-    return final.winner_id === userId ? { placement: 'champion', ...REWARD_TABLE.champion }
+    return sameUser(final.winner_id, userId) ? { placement: 'champion', ...REWARD_TABLE.champion }
       : { placement: 'runnerUp', ...REWARD_TABLE.runnerUp };
   }
   const semifinalLoss = list.find((entry) => entry.round === 2

@@ -1,12 +1,12 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 
 const baseUrl = (process.env.E2E_BASE_URL || 'http://127.0.0.1:3000').replace(/\/$/, '');
 const chromium = process.env.CHROMIUM_BIN || 'chromium';
-const artifactsDir = process.env.E2E_ARTIFACTS_DIR || path.resolve('dist');
+const artifactsDir = process.env.E2E_ARTIFACTS_DIR || path.resolve('test-results/e2e');
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -146,6 +146,7 @@ async function setInput(cdp, page, selector, value) {
 
 async function screenshot(cdp, page, filename) {
   const { data } = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false }, page.sessionId);
+  await mkdir(artifactsDir, { recursive: true });
   const output = path.join(artifactsDir, filename);
   await writeFile(output, Buffer.from(data, 'base64'));
   return output;
@@ -184,109 +185,102 @@ try {
     buttons: document.querySelectorAll('button').length,
   })`);
   if (hostBootstrap.buttons <= 3) throw new Error(`Host app did not render: ${JSON.stringify(hostBootstrap)}`);
-  await clickButton(cdp, host, 'Challenge a player');
-  await waitFor(cdp, host, `Array.from(document.querySelectorAll('button')).some((b) => b.innerText === 'Host Game')`, 'multiplayer menu');
-  await clickButton(cdp, host, 'Host Game');
-  await waitFor(cdp, host, `Array.from(document.querySelectorAll('button')).some((b) => b.innerText === 'Create Game')`, 'host configuration');
-  await clickButton(cdp, host, 'Create Game');
-  const roomId = await waitFor(cdp, host, `document.querySelector('.invite-code-panel strong')?.textContent`, 'room creation');
-  const inviteUrl = await evaluate(cdp, host, `document.querySelector('.invite-url').textContent`);
-  const inviteHasSecret = await evaluate(cdp, host, `document.querySelector('.invite-url').textContent.includes(localStorage.getItem('noughtline_access_token'))`);
+  await clickButton(cdp, host, 'Host or join a room');
+  await waitFor(cdp, host, `Array.from(document.querySelectorAll('button')).some((b) => b.innerText === 'Create room' && !b.disabled)`, 'host socket readiness');
+  await clickButton(cdp, host, 'Create room');
+  const roomId = await waitFor(cdp, host, `document.querySelector('.invite-code')?.textContent`, 'room creation');
+  const inviteUrl = await evaluate(cdp, host, `document.querySelector('.invite-link').textContent`);
+  const inviteHasSecret = await evaluate(cdp, host, `document.querySelector('.invite-link').textContent.includes(localStorage.getItem('noughtline_access_token'))`);
   if (inviteHasSecret) throw new Error('Invite URL leaked the access token');
   await clickButton(cdp, host, 'Enter waiting room');
-  await waitFor(cdp, host, `document.body.innerText.includes('Waiting for opponent')`, 'host waiting room');
+  await waitFor(cdp, host, `document.body.innerText.includes('Waiting for your opponent')`, 'host waiting room');
 
   let guest = await attachPage(cdp, guestContext, inviteUrl, { width: 390, height: 844, mobile: true });
-  const prefilled = await waitFor(cdp, guest, `document.querySelector('#room-code')?.value`, 'prefilled join dialog');
+  const prefilled = await waitFor(cdp, guest, `document.querySelector('#join-code')?.value`, 'prefilled join dialog');
   if (prefilled !== roomId) throw new Error(`Invite prefill mismatch: ${prefilled} != ${roomId}`);
-  await waitFor(cdp, guest, `Array.from(document.querySelectorAll('button')).some((button) => button.innerText === 'Join room' && !button.disabled)`, 'guest socket readiness');
+  await waitFor(cdp, guest, `Array.from(document.querySelectorAll('button')).some((button) => button.innerText === 'Join' && !button.disabled)`, 'guest socket readiness');
 
-  await setInput(cdp, guest, '#room-code', 'x');
+  await setInput(cdp, guest, '#join-code', 'x');
   await evaluate(cdp, guest, `document.querySelector('form').requestSubmit(); true`);
-  const inlineError = await waitFor(cdp, guest, `document.querySelector('.form-error')?.textContent`, 'inline invalid-code error');
+  const inlineError = await waitFor(cdp, guest, `document.querySelector('.field-error')?.textContent`, 'inline invalid-code error');
   if (!inlineError.includes('valid room code')) throw new Error(`Unexpected validation error: ${inlineError}`);
 
-  await setInput(cdp, guest, '#room-code', roomId);
+  await setInput(cdp, guest, '#join-code', roomId);
   await evaluate(cdp, guest, `document.querySelector('form').requestSubmit(); true`);
   await waitFor(cdp, guest, `document.querySelector('.game-screen') && !document.querySelector('.modal-backdrop')`, 'guest joined game');
-  await waitFor(cdp, host, `!document.body.innerText.includes('Waiting for opponent') && document.querySelectorAll('.square:not(:disabled)').length === 9`, 'host active board');
+  await waitFor(cdp, host, `!document.body.innerText.includes('Waiting for your opponent') && document.querySelectorAll('.board-cell:not([aria-disabled="true"])').length === 9`, 'host active board');
 
   const guestToken = await evaluate(cdp, guest, `localStorage.getItem('noughtline_access_token')`);
-  await evaluate(cdp, host, `document.querySelectorAll('.square')[0].click(); true`);
-  await waitFor(cdp, guest, `document.querySelectorAll('.square')[0].textContent.trim() === 'X'`, 'host move on guest board');
-  await evaluate(cdp, guest, `document.querySelectorAll('.square')[3].click(); true`);
-  await waitFor(cdp, host, `document.querySelectorAll('.square')[3].textContent.trim() === 'O'`, 'guest move on host board');
+  await evaluate(cdp, host, `document.querySelectorAll('.board-cell')[0].click(); true`);
+  await waitFor(cdp, guest, `Boolean(document.querySelectorAll('.board-cell')[0].querySelector('.mark-x'))`, 'host move on guest board');
+  await evaluate(cdp, guest, `document.querySelectorAll('.board-cell')[3].click(); true`);
+  await waitFor(cdp, host, `Boolean(document.querySelectorAll('.board-cell')[3].querySelector('.mark-o'))`, 'guest move on host board');
 
   await cdp.send('Page.reload', { ignoreCache: true }, guest.sessionId);
-  await waitFor(cdp, guest, `document.querySelector('.game-screen') && document.querySelectorAll('.square')[0].textContent.trim() === 'X' && document.querySelectorAll('.square')[3].textContent.trim() === 'O'`, 'guest refresh recovery');
+  await waitFor(cdp, guest, `document.querySelector('.game-screen') && Boolean(document.querySelectorAll('.board-cell')[0].querySelector('.mark-x')) && Boolean(document.querySelectorAll('.board-cell')[3].querySelector('.mark-o'))`, 'guest refresh recovery');
   const guestTokenAfterRefresh = await evaluate(cdp, guest, `localStorage.getItem('noughtline_access_token')`);
   if (guestTokenAfterRefresh !== guestToken) throw new Error('Guest identity changed after refresh');
 
   await cdp.send('Target.closeTarget', { targetId: guest.targetId });
-  const disconnectText = await waitFor(cdp, host, `document.querySelector('.disconnect-countdown')?.textContent`, 'host disconnect countdown');
+  const disconnectText = await waitFor(cdp, host, `document.querySelector('.game-status-text')?.textContent.includes('Opponent disconnected') && document.querySelector('.game-status-text')?.textContent`, 'host disconnect countdown');
   if (!disconnectText.includes('Opponent disconnected')) throw new Error(`Unexpected disconnect copy: ${disconnectText}`);
-  const disabledWhilePaused = await evaluate(cdp, host, `document.querySelectorAll('.square:disabled').length`);
+  const disabledWhilePaused = await evaluate(cdp, host, `document.querySelectorAll('.board-cell[aria-disabled="true"]').length`);
   if (disabledWhilePaused !== 9) throw new Error(`Expected 9 disabled cells while paused, got ${disabledWhilePaused}`);
 
   guest = await attachPage(cdp, guestContext, baseUrl, { width: 390, height: 844, mobile: true });
-  await waitFor(cdp, guest, `document.querySelector('.game-screen') && document.querySelectorAll('.square')[3].textContent.trim() === 'O'`, 'guest reconnect recovery');
+  await waitFor(cdp, guest, `document.querySelector('.game-screen') && Boolean(document.querySelectorAll('.board-cell')[3].querySelector('.mark-o'))`, 'guest reconnect recovery');
   const guestTokenAfterReconnect = await evaluate(cdp, guest, `localStorage.getItem('noughtline_access_token')`);
   if (guestTokenAfterReconnect !== guestToken) throw new Error('Guest identity changed after reconnect');
-  await waitFor(cdp, host, `!document.querySelector('.disconnect-countdown') && document.querySelectorAll('.square:not(:disabled)').length === 9`, 'host resumed board');
+  await waitFor(cdp, host, `!document.querySelector('.game-status')?.classList.contains('is-paused') && document.querySelectorAll('.board-cell:not([aria-disabled="true"])').length === 7`, 'host resumed board');
 
   const hostToken = await evaluate(cdp, host, `localStorage.getItem('noughtline_access_token')`);
   await cdp.send('Page.reload', { ignoreCache: true }, host.sessionId);
-  await waitFor(cdp, host, `document.querySelector('.game-screen') && document.querySelectorAll('.square')[0].textContent.trim() === 'X' && document.querySelectorAll('.square')[3].textContent.trim() === 'O'`, 'host refresh recovery');
+  await waitFor(cdp, host, `document.querySelector('.game-screen') && Boolean(document.querySelectorAll('.board-cell')[0].querySelector('.mark-x')) && Boolean(document.querySelectorAll('.board-cell')[3].querySelector('.mark-o'))`, 'host refresh recovery');
   const hostTokenAfterRefresh = await evaluate(cdp, host, `localStorage.getItem('noughtline_access_token')`);
   if (hostTokenAfterRefresh !== hostToken) throw new Error('Host identity changed after refresh');
 
   const thirdContext = (await cdp.send('Target.createBrowserContext')).browserContextId;
   const third = await attachPage(cdp, thirdContext, baseUrl, { width: 1024, height: 800, mobile: false });
   await waitFor(cdp, third, `document.querySelectorAll('button').length > 3`, 'third player home');
-  await clickButton(cdp, third, 'Challenge a player');
-  await waitFor(cdp, third, `Array.from(document.querySelectorAll('button')).some((button) => button.innerText === 'Host Game')`, 'third player multiplayer menu');
-  await clickButton(cdp, third, 'Host Game');
-  await waitFor(cdp, third, `Array.from(document.querySelectorAll('button')).some((button) => button.innerText === 'Create Game')`, 'third player host configuration');
-  await clickButton(cdp, third, 'Create Game');
-  const conflictRoomId = await waitFor(cdp, third, `document.querySelector('.invite-code-panel strong')?.textContent`, 'conflict room creation');
-  const conflictInviteUrl = await evaluate(cdp, third, `document.querySelector('.invite-url').textContent`);
+  await clickButton(cdp, third, 'Host or join a room');
+  await waitFor(cdp, third, `Array.from(document.querySelectorAll('button')).some((button) => button.innerText === 'Create room' && !button.disabled)`, 'third player socket readiness');
+  await clickButton(cdp, third, 'Create room');
+  const conflictRoomId = await waitFor(cdp, third, `document.querySelector('.invite-code')?.textContent`, 'conflict room creation');
+  const conflictInviteUrl = await evaluate(cdp, third, `document.querySelector('.invite-link').textContent`);
   await clickButton(cdp, third, 'Enter waiting room');
-  await waitFor(cdp, third, `document.body.innerText.includes('Waiting for opponent')`, 'third player waiting room');
+  await waitFor(cdp, third, `document.body.innerText.includes('Waiting for your opponent')`, 'third player waiting room');
 
   await cdp.send('Page.navigate', { url: conflictInviteUrl }, host.sessionId);
-  await waitFor(cdp, host, `document.querySelector('#room-code')?.value === ${JSON.stringify(conflictRoomId)}`, 'host cross-room invite');
-  await waitFor(cdp, host, `Array.from(document.querySelectorAll('button')).some((button) => button.innerText === 'Join room' && !button.disabled)`, 'host cross-room socket readiness');
+  await waitFor(cdp, host, `document.querySelector('#join-code')?.value === ${JSON.stringify(conflictRoomId)}`, 'host cross-room invite');
+  await waitFor(cdp, host, `Array.from(document.querySelectorAll('button')).some((button) => button.innerText === 'Join' && !button.disabled)`, 'host cross-room socket readiness');
   await evaluate(cdp, host, `document.querySelector('form').requestSubmit(); true`);
-  const conflictTitle = await waitFor(cdp, host, `document.querySelector('#active-room-title')?.textContent`, 'active-room conflict dialog');
-  if (!conflictTitle.includes('already have a match')) throw new Error(`Unexpected active-room conflict copy: ${conflictTitle}`);
-  const conflictExistingRoom = await evaluate(cdp, host, `document.querySelector('.invite-code-panel strong')?.textContent`);
+  await waitFor(cdp, host, `document.body.innerText.includes('You already have a match')`, 'active-room conflict dialog');
+  const conflictExistingRoom = await evaluate(cdp, host, `document.querySelector('.invite-code')?.textContent`);
   if (conflictExistingRoom !== roomId) throw new Error(`Conflict pointed to ${conflictExistingRoom}, expected ${roomId}`);
   await clickButton(cdp, host, 'Resume match');
-  await waitFor(cdp, host, `document.querySelector('.game-screen') && document.querySelectorAll('.square')[3].textContent.trim() === 'O'`, 'resume from active-room conflict');
+  await waitFor(cdp, host, `document.querySelector('.game-screen') && Boolean(document.querySelectorAll('.board-cell')[3].querySelector('.mark-o'))`, 'resume from active-room conflict');
 
-  await evaluate(cdp, third, `document.querySelector('.back-btn').click(); true`);
-  const waitingLeaveTitle = await waitFor(cdp, third, `document.querySelector('#leave-room-title')?.textContent`, 'waiting-room leave confirmation');
-  if (waitingLeaveTitle !== 'Leave waiting room?') throw new Error(`Unexpected waiting leave copy: ${waitingLeaveTitle}`);
+  await clickButton(cdp, third, 'Leave match');
+  await waitFor(cdp, third, `document.body.innerText.includes('Leave this waiting room?')`, 'waiting-room leave confirmation');
   const waitingSafeFocus = await evaluate(cdp, third, `document.activeElement?.innerText`);
   if (waitingSafeFocus !== 'Stay in room') throw new Error(`Waiting dialog focused ${waitingSafeFocus} instead of safe action`);
   await clickButton(cdp, third, 'Leave room');
   await waitFor(cdp, third, `Boolean(document.querySelector('.home-screen'))`, 'waiting host returned home');
 
-  await evaluate(cdp, host, `document.querySelector('.back-btn').click(); true`);
-  const forfeitTitle = await waitFor(cdp, host, `document.querySelector('#leave-room-title')?.textContent`, 'forfeit confirmation');
-  if (forfeitTitle !== 'Forfeit this match?') throw new Error(`Unexpected forfeit copy: ${forfeitTitle}`);
+  await clickButton(cdp, host, 'Leave match');
+  await waitFor(cdp, host, `document.body.innerText.includes('Forfeit this series?')`, 'forfeit confirmation');
   const forfeitSafeFocus = await evaluate(cdp, host, `document.activeElement?.innerText`);
   if (forfeitSafeFocus !== 'Stay in match') throw new Error(`Forfeit dialog focused ${forfeitSafeFocus} instead of safe action`);
   await evaluate(cdp, host, `document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); true`);
-  await waitFor(cdp, host, `Boolean(!document.querySelector('#leave-room-title') && document.querySelector('.game-screen'))`, 'forfeit cancellation');
-  await evaluate(cdp, host, `document.querySelector('.back-btn').click(); true`);
-  await waitFor(cdp, host, `document.querySelector('#leave-room-title')?.textContent === 'Forfeit this match?'`, 'reopened forfeit confirmation');
+  await waitFor(cdp, host, `Boolean(!document.querySelector('.dialog-title') && document.querySelector('.game-screen'))`, 'forfeit cancellation');
+  await clickButton(cdp, host, 'Leave match');
+  await waitFor(cdp, host, `document.querySelector('.dialog-title')?.textContent === 'Forfeit this series?'`, 'reopened forfeit confirmation');
   const hostScreenshot = await screenshot(cdp, host, '_e2e-host-forfeit.png');
-  await clickButton(cdp, host, 'Forfeit match');
+  await clickButton(cdp, host, 'Forfeit series');
   await waitFor(cdp, host, `Boolean(document.querySelector('.home-screen'))`, 'forfeiter returned home');
-  const opponentResult = await waitFor(cdp, guest, `document.querySelector('.winner-text')?.textContent`, 'opponent voluntary-forfeit result');
+  const opponentResult = await waitFor(cdp, guest, `document.querySelector('.game-status-text')?.textContent`, 'opponent voluntary-forfeit result');
   if (!opponentResult.includes('Opponent forfeited')) throw new Error(`Unexpected opponent result: ${opponentResult}`);
-  await waitFor(cdp, guest, `!document.querySelector('.recovery-toast')`, 'terminal state clears recovery toast');
+  await waitFor(cdp, guest, `!document.querySelector('.toast')`, 'terminal state clears recovery toast');
   const terminalAction = await evaluate(cdp, guest, `Array.from(document.querySelectorAll('button')).find((button) => button.innerText === 'Return home')?.innerText`);
   if (terminalAction !== 'Return home') throw new Error(`Unexpected terminal action: ${terminalAction}`);
   const guestScreenshot = await screenshot(cdp, guest, '_e2e-guest-forfeit-mobile.png');
@@ -324,7 +318,7 @@ try {
         documentOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
         horizontalViolations,
         touchTargets,
-        boardWidth: document.querySelector('.grid-container')?.getBoundingClientRect().width || 0,
+        boardWidth: document.querySelector('.board')?.getBoundingClientRect().width || 0,
       };
     })()`);
     if (layout.documentOverflow > 1 || layout.horizontalViolations.length > 0) {
@@ -337,26 +331,24 @@ try {
     if (layout.boardWidth > viewport.width) throw new Error(`${viewport.name} board exceeds viewport width`);
   }
 
-  await clickButton(cdp, host, 'Challenge a player');
-  await waitFor(cdp, host, `Array.from(document.querySelectorAll('button')).some((button) => button.innerText === 'Host Game')`, 'post-forfeit multiplayer menu');
-  await clickButton(cdp, host, 'Host Game');
-  await waitFor(cdp, host, `Array.from(document.querySelectorAll('button')).some((button) => button.innerText === 'Create Game')`, 'post-forfeit host configuration');
-  await clickButton(cdp, host, 'Create Game');
-  const replacementRoomId = await waitFor(cdp, host, `document.querySelector('.invite-code-panel strong')?.textContent`, 'post-forfeit room creation');
-  const replacementInviteUrl = await evaluate(cdp, host, `document.querySelector('.invite-url').textContent`);
+  await clickButton(cdp, host, 'Host or join a room');
+  await waitFor(cdp, host, `Array.from(document.querySelectorAll('button')).some((button) => button.innerText === 'Create room' && !button.disabled)`, 'post-forfeit socket readiness');
+  await clickButton(cdp, host, 'Create room');
+  const replacementRoomId = await waitFor(cdp, host, `document.querySelector('.invite-code')?.textContent`, 'post-forfeit room creation');
+  const replacementInviteUrl = await evaluate(cdp, host, `document.querySelector('.invite-link').textContent`);
   await clickButton(cdp, host, 'Enter waiting room');
-  await waitFor(cdp, host, `document.body.innerText.includes('Waiting for opponent')`, 'replacement waiting room');
-  await evaluate(cdp, host, `document.querySelector('.back-btn').click(); true`);
-  await waitFor(cdp, host, `document.querySelector('#leave-room-title')?.textContent === 'Leave waiting room?'`, 'replacement room leave confirmation');
+  await waitFor(cdp, host, `document.body.innerText.includes('Waiting for your opponent')`, 'replacement waiting room');
+  await clickButton(cdp, host, 'Leave match');
+  await waitFor(cdp, host, `document.body.innerText.includes('Leave this waiting room?')`, 'replacement room leave confirmation');
   await clickButton(cdp, host, 'Leave room');
   await waitFor(cdp, host, `Boolean(document.querySelector('.home-screen'))`, 'replacement room deletion');
 
   await cdp.send('Page.navigate', { url: replacementInviteUrl }, guest.sessionId);
-  await waitFor(cdp, guest, `document.querySelector('#room-code')?.value === ${JSON.stringify(replacementRoomId)}`, 'deleted-room invite prefill');
-  await waitFor(cdp, guest, `Array.from(document.querySelectorAll('button')).some((button) => button.innerText === 'Join room' && !button.disabled)`, 'deleted-room join readiness');
+  await waitFor(cdp, guest, `document.querySelector('#join-code')?.value === ${JSON.stringify(replacementRoomId)}`, 'deleted-room invite prefill');
+  await waitFor(cdp, guest, `Array.from(document.querySelectorAll('button')).some((button) => button.innerText === 'Join' && !button.disabled)`, 'deleted-room join readiness');
   await evaluate(cdp, guest, `document.querySelector('form').requestSubmit(); true`);
-  const deletedRoomError = await waitFor(cdp, guest, `document.querySelector('.form-error')?.textContent`, 'deleted-room rejection');
-  if (!deletedRoomError.includes('no longer exists')) throw new Error(`Unexpected deleted-room error: ${deletedRoomError}`);
+  const deletedRoomError = await waitFor(cdp, guest, `document.querySelector('.field-error')?.textContent`, 'deleted-room rejection');
+  if (!/no longer exists|room not found/i.test(deletedRoomError)) throw new Error(`Unexpected deleted-room error: ${deletedRoomError}`);
 
   console.log(JSON.stringify({
     status: 'passed',
@@ -368,8 +360,8 @@ try {
     board: ['X', null, null, 'O', null, null, null, null, null],
     conflictRoomId,
     conflictExistingRoom,
-    waitingLeaveTitle,
-    forfeitTitle,
+    waitingLeaveTitle: 'Leave this waiting room?',
+    forfeitTitle: 'Forfeit this series?',
     opponentResult,
     replacementRoomId,
     deletedRoomError,
@@ -382,6 +374,12 @@ try {
   process.exitCode = 1;
 } finally {
   cdp?.close();
-  browser.kill('SIGTERM');
-  await rm(profileDir, { recursive: true, force: true });
+  browser?.kill('SIGTERM');
+  if (browser?.exitCode === null) {
+    await Promise.race([
+      new Promise((resolve) => browser.once('exit', resolve)),
+      sleep(2000),
+    ]);
+  }
+  await rm(profileDir, { recursive: true, force: true, maxRetries: 5 }).catch(() => {});
 }

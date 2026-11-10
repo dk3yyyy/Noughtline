@@ -140,7 +140,7 @@ function createEconomy({ db, config, fetchImpl = global.fetch, now = () => Date.
       && data.amount === intent.amount_ngn * 100
       && data.currency === 'NGN';
     if (!valid) {
-      db.prepare("UPDATE payment_intents SET status = 'failed', provider_payload = ? WHERE reference = ?")
+      db.prepare("UPDATE payment_intents SET status = 'failed', provider_payload = ? WHERE reference = ? AND status != 'credited'")
         .run(JSON.stringify(data || payload), reference);
       throw Object.assign(new Error('Payment could not be verified'), { status: 400 });
     }
