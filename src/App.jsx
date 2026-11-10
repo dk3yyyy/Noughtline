@@ -176,6 +176,8 @@ export default function App() {
   const ratingSettleSeqRef = useRef(0);
   const [ratingChange, setRatingChange] = useState(null);
   const [shopItems, setShopItems] = useState([]);
+  const [shopLoading, setShopLoading] = useState(true);
+  const [shopError, setShopError] = useState('');
   const [inventory, setInventory] = useState([]);
   const [gemPackages, setGemPackages] = useState([]);
   const [paymentsConfigured, setPaymentsConfigured] = useState(false);
@@ -281,9 +283,16 @@ export default function App() {
   }, [user.id, fetchUserData, notify]);
 
   useEffect(() => {
-    api.get('/api/shop/items').then(({ data }) => setShopItems(data)).catch(() => {});
-    api.get('/api/economy/gem-packages').then(({ data }) => setGemPackages(data)).catch(() => {});
-    api.get('/api/config').then(({ data }) => setPaymentsConfigured(Boolean(data?.payments?.configured))).catch(() => {});
+    let alive = true;
+    setShopLoading(true);
+    setShopError('');
+    api.get('/api/shop/items')
+      .then(({ data }) => { if (alive) setShopItems(Array.isArray(data) ? data : []); })
+      .catch(() => { if (alive) setShopError('Could not load the shop. Check your connection and try again.'); })
+      .finally(() => { if (alive) setShopLoading(false); });
+    api.get('/api/economy/gem-packages').then(({ data }) => { if (alive) setGemPackages(data); }).catch(() => {});
+    api.get('/api/config').then(({ data }) => { if (alive) setPaymentsConfigured(Boolean(data?.payments?.configured)); }).catch(() => {});
+    return () => { alive = false; };
   }, []);
 
   useEffect(() => {
@@ -316,6 +325,10 @@ export default function App() {
 
   const enterMultiplayerRoom = useCallback((room, message = '') => {
     saveActiveRoom(localStorage, room.id);
+    if (getInviteRoomId(window.location.pathname)) {
+      window.history.replaceState(null, '', '/');
+      setInviteRoomId('');
+    }
     setGameConfig((previous) => ({
       ...previous,
       mode: 'multiplayer',
@@ -372,7 +385,7 @@ export default function App() {
   const {
     board, handleClick, winner, seriesWinner, winningLine, isXNext, resetGame, mySymbol,
     gameStatus, round, score, readyNextRound, roomPlayers,
-    disconnectDeadline, completionReason, actionError,
+    disconnectDeadline, completionReason, actionError, isActionPending,
   } = useTicTacToe(gameConfig, setGameConfig, sounds, user);
 
   const resultWinner = gameStatus === 'complete' ? (seriesWinner || winner) : winner;
@@ -436,7 +449,7 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (isConnected !== true || !user.id || activeRoomConflict) return;
+    if (isConnected !== true || !user.id || activeRoomConflict || inviteRoomId) return;
     if (skipRecoveryOnce.current) {
       skipRecoveryOnce.current = false;
       return;
@@ -465,10 +478,16 @@ export default function App() {
       }
       enterMultiplayerRoom(result.room, 'Match restored.');
     });
-  }, [isConnected, user.id, activeRoomConflict, enterMultiplayerRoom]);
+  }, [isConnected, user.id, activeRoomConflict, inviteRoomId, enterMultiplayerRoom]);
 
   useEffect(() => {
-    if (gameStatus === 'complete' || gameStatus === 'cancelled') setRecoveryMessage('');
+    if (gameStatus === 'complete' || gameStatus === 'cancelled') {
+      setRecoveryMessage('');
+      // A finished room must not be offered as a resumable match on the next
+      // load. Leaving it in storage made /join/<new-room> restore the old
+      // result instead of opening the invite.
+      clearActiveRoom(localStorage);
+    }
   }, [gameStatus]);
 
   useEffect(() => {
@@ -496,7 +515,7 @@ export default function App() {
     const isLoss = resultWinner && resultWinner !== 'Draw' && resultWinner !== mySymbol;
     if (isWin) {
       sounds.playWin();
-      confetti({ particleCount: 120, spread: 90, origin: { y: 0.65 }, colors: ['#f2b33d', '#ffffff', '#b4b4b4'] });
+      confetti({ particleCount: 120, spread: 90, origin: { y: 0.65 }, colors: ['#f2b33d', '#ffffff', '#b4b4b4'], disableForReducedMotion: true });
     } else if (isLoss) {
       sounds.playLose();
     }
@@ -586,6 +605,8 @@ export default function App() {
         return;
       }
       saveActiveRoom(localStorage, result.room.id);
+      setIsSearching(false);
+      searchingRef.current = false;
       setGameConfig((previous) => ({
         ...previous, mode: 'multiplayer', roomId: result.room.id, size, rounds, roomSnapshot: result.room,
       }));
@@ -625,6 +646,8 @@ export default function App() {
         resolve(result);
         return;
       }
+      setIsSearching(false);
+      searchingRef.current = false;
       enterMultiplayerRoom(result.room);
       clearInvitePath();
       setInviteRoomId('');
@@ -742,13 +765,15 @@ export default function App() {
   };
 
   const handleCopyGameInvite = async () => {
-    if (!gameConfig.roomId) return;
+    if (!gameConfig.roomId) return false;
     try {
       await navigator.clipboard.writeText(createInviteUrl(gameConfig.roomId, window.location.origin));
       setCopiedInvite(true);
       window.setTimeout(() => setCopiedInvite(false), 2200);
+      return true;
     } catch {
       notify(`Copy failed. Room code ${gameConfig.roomId}.`, 'error');
+      return false;
     }
   };
 
@@ -1125,7 +1150,8 @@ export default function App() {
               inventory={inventory}
               shopItems={shopItems}
               gemPackages={gemPackages}
-              loading={shopItems.length === 0}
+              loading={shopLoading}
+              error={shopError}
               onSelectItem={setSelectedShopItem}
               onEquip={equipAvatar}
               onBuyGems={(packageId) => (packageId ? buyGemPackage(packageId) : setShowBuyGems(true))}
@@ -1163,6 +1189,8 @@ export default function App() {
               resultWinner={resultWinner}
               ratingChip={ratingChip}
               opponentDisconnected={opponentDisconnected}
+              isConnected={isConnected}
+              isActionPending={isActionPending}
               onBack={handleGameBack}
               onReadyNextRound={readyNextRound}
               onRematch={handleRequestRematch}

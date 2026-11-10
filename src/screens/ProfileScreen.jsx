@@ -425,6 +425,8 @@ const CollectionPanel = ({ inventory, onEquip, equippedId }) => {
 
 /* ---------------- Screen ---------------- */
 
+const PROFILE_TABS = ['overview', 'matches', 'wallet', 'collection'];
+
 export default function ProfileScreen({
   user,
   inventory,
@@ -436,13 +438,13 @@ export default function ProfileScreen({
   googleAvailable,
   initialTab = 'overview',
 }) {
-  const [tab, setTab] = useState(initialTab);
+  const [tab, setTab] = useState(PROFILE_TABS.includes(initialTab) ? initialTab : 'overview');
   const [matches, setMatches] = useState([]);
   const [ledger, setLedger] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  useEffect(() => { setTab(initialTab); }, [initialTab]);
+  useEffect(() => { setTab(PROFILE_TABS.includes(initialTab) ? initialTab : 'overview'); }, [initialTab]);
 
   const loadActivity = useCallback(async (signal) => {
     setLoading(true);

@@ -93,7 +93,7 @@ export default function HomeScreen({
   const rating = Number.isFinite(Number(user?.rating)) ? Number(user.rating) : null;
   const level = Number(user?.level) || 1;
   const xp = Number(user?.xp) || 0;
-  const xpIntoLevel = xp % 100;
+  const xpIntoLevel = xp % 250;
   const boost = events[0];
 
   return (
@@ -154,7 +154,7 @@ export default function HomeScreen({
                     Find opponent
                     <ArrowRight size={16} aria-hidden="true" />
                   </button>
-                  <button type="button" className="btn btn-quiet" onClick={() => onNavigate('battle', { mode: 'private' })}>
+                  <button type="button" className="btn btn-quiet" onClick={() => onNavigate('play', { mode: 'private' })}>
                     <Users size={16} aria-hidden="true" />
                     Play a friend instead
                   </button>
@@ -168,7 +168,7 @@ export default function HomeScreen({
               <div className="mode-icon" aria-hidden="true"><Users size={20} /></div>
               <h2 id="private-title" className="mode-title">Private room</h2>
               <p className="mode-copy">Host a room, send the invite link, and play unranked. Private series never pay rewards or affect rating.</p>
-              <button type="button" className="btn btn-ghost" onClick={() => onNavigate('battle', { mode: 'private' })}>
+              <button type="button" className="btn btn-ghost" onClick={() => onNavigate('play', { mode: 'private' })}>
                 Host or join a room
               </button>
             </section>
@@ -177,7 +177,7 @@ export default function HomeScreen({
               <div className="mode-icon" aria-hidden="true"><Bot size={20} /></div>
               <h2 id="practice-title" className="mode-title">Practice vs AI</h2>
               <p className="mode-copy">Pick a 3×3, 4×4 or 5×5 board and one of four strengths. Practice games are local and unranked.</p>
-              <button type="button" className="btn btn-ghost" onClick={() => onNavigate('battle', { mode: 'practice' })}>
+              <button type="button" className="btn btn-ghost" onClick={() => onNavigate('play', { mode: 'practice' })}>
                 Set up a practice game
               </button>
             </section>
@@ -301,7 +301,7 @@ export default function HomeScreen({
                     );
                   })}
                 </ul>
-                <button type="button" className="btn btn-quiet rail-link" onClick={() => onNavigate('profile', { tab: 'quests' })}>
+                <button type="button" className="btn btn-quiet rail-link" onClick={() => onNavigate('profile', { tab: 'overview' })}>
                   Claim rewards
                   <ArrowRight size={14} aria-hidden="true" />
                 </button>

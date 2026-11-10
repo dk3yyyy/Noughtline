@@ -99,6 +99,9 @@ function createTournamentService({ db, economy, roomManager, now = () => Date.no
   // of surfacing (so a re-entrant finalize can never double-mint).
   const credit = (tournamentId, userId, currency, amount, placement) => {
     if (!Number.isSafeInteger(amount) || amount <= 0) return;
+    // A participant may delete their account before the bracket finalizes.
+    // Skip the missing recipient rather than aborting everyone's rewards.
+    if (!db.prepare('SELECT 1 FROM users WHERE id = ?').get(userId)) return;
     try {
       economy.changeBalance({
         userId,
@@ -247,7 +250,15 @@ function createTournamentService({ db, economy, roomManager, now = () => Date.no
       throw httpError('Match has already been resolved', 'MATCH_NOT_READY', 409);
     }
     const existing = match.room_id ? roomManager.getRoom(match.room_id) : null;
-    if (existing) return { roomId: existing.id };
+    if (existing) {
+      const expectedPlayers = [match.player_x_id, match.player_o_id].sort((a, b) => a - b).join(',');
+      const actualPlayers = existing.players.map((player) => player.id).sort((a, b) => a - b).join(',');
+      const correctFormat = existing.config?.size === 3 && existing.config?.rounds === 1;
+      if (expectedPlayers === actualPlayers && correctFormat) return { roomId: existing.id };
+      // A room with the reserved match id exists but was not created from this
+      // bracket row (or has the wrong format). It cannot be adopted.
+      roomManager.deleteRoom(existing.id);
+    }
 
     if (!match.player_x_id || !match.player_o_id) {
       throw httpError('Match is missing a player', 'MATCH_NOT_READY', 409);
@@ -333,6 +344,15 @@ function createTournamentService({ db, economy, roomManager, now = () => Date.no
         roomManager.deleteRoom(room.id);
         continue;
       }
+      if (room && room.state.status === 'active') {
+        // Both players stayed connected but stopped moving. Resolve the
+        // stalemate deterministically instead of leaving the bracket open
+        // forever.
+        if (room.updatedAt + WALKOVER_AFTER_MS > currentMs) continue;
+        completeMatchAndAdvance(match.id, lowerSeedWinnerId(match), currentMs);
+        roomManager.deleteRoom(room.id);
+        continue;
+      }
       if (room && !['waiting', 'paused'].includes(room.state.status)) continue;
       if (room && room.roundHistory.length > 0) continue; // play started: disconnect grace owns it
       if (dbTimeToMs(match.created_at) + WALKOVER_AFTER_MS > currentMs) continue;
@@ -403,9 +423,11 @@ function createTournamentService({ db, economy, roomManager, now = () => Date.no
     `).all(id);
     const matches = [];
     for (const row of matchRows) {
-      const bucket = matches.find((entry) => entry.round === row.round);
-      if (bucket) bucket.matches.push(row);
-      else matches.push({ round: row.round, matches: [row] });
+      const publicRow = { ...row };
+      delete publicRow.room_id;
+      const bucket = matches.find((entry) => entry.round === publicRow.round);
+      if (bucket) bucket.matches.push(publicRow);
+      else matches.push({ round: publicRow.round, matches: [publicRow] });
     }
     return {
       tournament: { ...tournament, playerCount: players.length },

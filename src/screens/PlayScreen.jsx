@@ -85,8 +85,8 @@ export default function PlayScreen({
   };
 
   const handleCopy = async () => {
-    await onCopyInvite();
-    setCopied(true);
+    const copiedOk = await onCopyInvite();
+    if (copiedOk) setCopied(true);
   };
 
   return (
@@ -316,7 +316,7 @@ export default function PlayScreen({
                 <h2 id="invite-note-title" className="panel-title">Invite link</h2>
               </div>
               <p className="rail-copy">The link opens Noughtline with the room code filled in, so your friend only has to join.</p>
-              <p className="rail-code">noughtline.app/ROOM_CODE</p>
+              <p className="rail-code">noughtline.app/join/ROOM_CODE</p>
             </section>
           </aside>
         </div>

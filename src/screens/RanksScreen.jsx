@@ -23,8 +23,8 @@ export default function RanksScreen({ user }) {
   useEffect(load, []);
 
   const myIndex = useMemo(
-    () => (rows || []).findIndex((row) => row.username === user?.username),
-    [rows, user?.username],
+    () => (rows || []).findIndex((row) => row.id === user?.id),
+    [rows, user?.id],
   );
   const myRow = myIndex >= 0 ? rows[myIndex] : null;
   const rating = Number.isFinite(Number(user?.rating)) ? Number(user.rating) : null;

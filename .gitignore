@@ -37,3 +37,6 @@ server/tic-tac.db
 *.db-shm
 *.db-wal
 .taste-skill/
+
+# E2E artifacts
+test-results/
