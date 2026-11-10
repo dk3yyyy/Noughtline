@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Coins, Gem, Plus, ShieldCheck, ShoppingBag } from 'lucide-react';
 import { formatNumber, formatCoins } from '../format';
-import {Chip, Empty, Loading} from '../ui.jsx';
+import {Chip, Empty, ErrorNote, Loading} from '../ui.jsx';
 
 const RARITY_ORDER = ['common', 'rare', 'epic', 'legendary', 'god'];
 
@@ -11,6 +11,7 @@ export default function ShopScreen({
   shopItems,
   gemPackages,
   loading,
+  error,
   onSelectItem,
   onEquip,
   onBuyGems,
@@ -73,7 +74,9 @@ export default function ShopScreen({
           </div>
         </div>
 
-        {loading && items.length === 0 ? (
+        {error ? (
+          <ErrorNote>{error}</ErrorNote>
+        ) : loading && items.length === 0 ? (
           <Loading label="Loading the shop…" />
         ) : items.length === 0 ? (
           <Empty title="Nothing in this rarity">Choose another filter.</Empty>

@@ -19,6 +19,18 @@ function withEnvironment(values, run) {
   }
 }
 
+test('refuses to start without a JWT secret outside tests', () => {
+  withEnvironment({ NODE_ENV: undefined, JWT_SECRET: undefined }, () => {
+    assert.throws(() => loadConfig({ nodeEnv: 'development' }), /JWT_SECRET is required/);
+  });
+});
+
+test('uses only the explicit test fallback secret in test runtimes', () => {
+  withEnvironment({ NODE_ENV: 'test', JWT_SECRET: undefined }, () => {
+    assert.equal(loadConfig().jwtSecret, 'test-only-noughtline-secret');
+  });
+});
+
 test('uses the Render external URL for same-origin production defaults', () => {
   withEnvironment({
     NODE_ENV: 'production',

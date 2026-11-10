@@ -321,12 +321,15 @@ class RoomManager {
       room.state.completionReason = reason;
       room.state.disconnectDeadline = null;
       room.resumeStatus = null;
-      room.state.score[winner.symbol] += 1;
       room.nextRoundReady.clear();
       room.rematchReady.clear();
       if (completedRound && room.roundHistory.length > 0) {
+        // The round is already on the scoreboard. A forfeit at round_complete
+        // decides the series but must not invent an extra win or relabel the
+        // completed round as a forfeited one.
         Object.assign(room.roundHistory.at(-1), { reason, seriesWinner: winner.symbol });
       } else {
+        room.state.score[winner.symbol] += 1;
         room.roundHistory.push({
           round: room.state.round,
           winner: winner.symbol,
@@ -417,7 +420,11 @@ class RoomManager {
   removeExpired(maxIdleMs = 30 * 60 * 1000) {
     const cutoff = this.now() - maxIdleMs;
     for (const [roomId, room] of this.rooms.entries()) {
-      if (room.updatedAt < cutoff) this.rooms.delete(roomId);
+      if (room.updatedAt >= cutoff) continue;
+      // Never reap a room with a connected player: an active or paused game
+      // must be settled by the normal timeout path, not silently deleted.
+      if (room.players.some((player) => player.connected)) continue;
+      this.rooms.delete(roomId);
     }
   }
 

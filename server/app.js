@@ -170,7 +170,14 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
   const onSeriesComplete = (room, roundHistory) => {
     const result = settleSeries(room, roundHistory);
     if (tournamentService && String(room.id || '').toUpperCase().startsWith(MATCH_ROOM_PREFIX)) {
-      tournamentService.afterSeriesComplete(room);
+      // settleSeries has committed the series and rewards at this point. A
+      // bracket-advance failure must not make the room manager rewind the
+      // committed room into an unsettled state that can never be retried.
+      try {
+        tournamentService.afterSeriesComplete(room);
+      } catch (error) {
+        console.error('Tournament advance failed after series settlement', error);
+      }
     }
     return result;
   };
@@ -199,7 +206,7 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
   });
 
   app.disable('x-powered-by');
-  const cspDirectives = { imgSrc: ["'self'", 'data:', 'https:'] };
+  const cspDirectives = { imgSrc: ["'self'", 'data:', 'https:'], workerSrc: ["'self'", 'blob:'] };
   if (config.googleClientId) {
     // Google Identity Services loads its client script and renders its sign-in
     // button/iframe from accounts.google.com; the default script-src 'self'
@@ -235,7 +242,26 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
   });
 
   app.use(express.json({ limit: '64kb' }));
-  app.use(rateLimit({ windowMs: 60_000, limit: config.nodeEnv === 'test' ? 10000 : 120, standardHeaders: 'draft-8', legacyHeaders: false }));
+  // Render terminates TLS at one trusted proxy in front of the app. Without
+  // this every request looks like the same IP and one client can exhaust the
+  // shared rate-limit bucket for the whole site.
+  if (config.nodeEnv === 'production' || process.env.RENDER) {
+    app.set('trust proxy', 1);
+  }
+  const requestLimiter = rateLimit({
+    windowMs: 60_000,
+    limit: config.nodeEnv === 'test' ? 10000 : 120,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    skip: (req) => req.path === '/api/health',
+  });
+  app.use(requestLimiter);
+  const guestLimiter = rateLimit({
+    windowMs: 60_000,
+    limit: config.nodeEnv === 'test' ? 10000 : 10,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+  });
 
   app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
 
@@ -245,7 +271,7 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
     res.json({ payments: { configured: Boolean(config.paystackSecretKey) } });
   });
 
-  app.post('/api/auth/guest', (req, res) => {
+  app.post('/api/auth/guest', guestLimiter, (req, res) => {
     const user = createGuest(db);
     res.status(201).json({ token: auth.signUser(user), user: publicUser(user) });
   });
@@ -379,6 +405,13 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
     res.json({ profile: publicUser(req.user), inventory, ledger, matches, exportedAt: new Date().toISOString() });
   });
   app.delete('/api/me', auth.requireAuth, (req, res) => {
+    // Revoke every outstanding token and live socket before removing the row.
+    // Otherwise a deleted account keeps acting through its existing socket and
+    // a later settlement hits a foreign-key failure.
+    db.prepare('UPDATE users SET session_version = session_version + 1 WHERE id = ?').run(req.user.id);
+    for (const socket of io.sockets.sockets.values()) {
+      if (socket.user?.id === req.user.id) socket.disconnect(true);
+    }
     db.prepare('DELETE FROM users WHERE id = ?').run(req.user.id);
     res.json({ success: true });
   });
@@ -502,7 +535,7 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
   });
 
   app.get('/api/leaderboard', (_req, res) => {
-    res.json(db.prepare("SELECT username, avatar, xp, level, wins, rating FROM users WHERE username != 'AI_Bot' ORDER BY rating DESC, xp DESC, wins DESC LIMIT 50").all());
+    res.json(db.prepare("SELECT id, username, avatar, xp, level, wins, rating FROM users WHERE username != 'AI_Bot' ORDER BY rating DESC, xp DESC, wins DESC LIMIT 50").all());
   });
 
   const spaIndex = config.staticDir && path.join(config.staticDir, 'index.html');
@@ -524,16 +557,43 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
       username: socket.user.username,
       avatar: socket.user.avatar,
     });
+    const replyTo = (callback) => (typeof callback === 'function' ? callback : () => {});
+    const roomPayload = (payload) => (
+      payload && typeof payload === 'object' && !Array.isArray(payload) ? payload : {}
+    );
+    // Every client event crosses a trust boundary. Accept only object payloads
+    // and functions as acknowledgements, re-check the session, and contain
+    // handler failures so one malformed packet cannot take down the process.
+    const onSocket = (event, handler) => socket.on(event, (payload, callback) => {
+      const reply = replyTo(callback);
+      const data = roomPayload(payload);
+      const currentUser = db.prepare('SELECT session_version FROM users WHERE id = ?').get(socket.user.id);
+      if (!currentUser || (currentUser.session_version || 0) !== (socket.user.session_version || 0)) {
+        const error = { error: 'Your session has ended. Sign in again.', code: 'SESSION_REVOKED' };
+        socket.emit('game_error', error);
+        reply(error);
+        socket.disconnect(true);
+        return;
+      }
+      try {
+        return handler(data, reply);
+      } catch (error) {
+        console.error(error);
+        const failure = { error: 'The action could not be completed', code: 'ACTION_FAILED' };
+        socket.emit('game_error', failure);
+        reply(failure);
+      }
+    });
     const emitFailure = (result, callback) => {
       const payload = gameErrorPayload(result);
       socket.emit('game_error', payload);
-      callback?.(payload);
+      replyTo(callback)(payload);
       return payload;
     };
     const emitResult = (result, callback) => {
       if (result.error) return emitFailure(result, callback);
       io.to(result.room.id).emit('room_update', result.room);
-      callback?.({ room: result.room });
+      replyTo(callback)({ room: result.room });
       return result;
     };
     const guardRoomAction = (callback) => {
@@ -555,8 +615,11 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
       }
     };
 
-    socket.on('create_room', ({ roomId, config: roomConfig } = {}, callback) => {
+    onSocket('create_room', ({ roomId, config: roomConfig } = {}, callback) => {
       if (!guardRoomAction(callback)) return;
+      if (typeof roomId === 'string' && /^(?:TM_|MATCH_)/i.test(roomId.trim())) {
+        return emitFailure({ error: 'That room id is reserved', code: 'RESERVED_ROOM_ID' }, callback);
+      }
       const activeRoom = roomManager.findActiveRoomForUser(socket.user.id);
       if (activeRoom) return emitFailure({
         error: 'You already have an active room',
@@ -572,46 +635,47 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
         roomManager.deleteRoom(id);
         return emitFailure(joined, callback);
       }
-      socket.join(id);
-      io.to(id).emit('room_update', joined.room);
-      return callback?.({ room: joined.room });
+      socket.join(joined.room.id);
+      io.to(joined.room.id).emit('room_update', joined.room);
+      return replyTo(callback)({ room: joined.room });
     });
 
-    socket.on('join_room', ({ roomId } = {}, callback) => {
+    onSocket('join_room', ({ roomId } = {}, callback) => {
       if (!guardRoomAction(callback)) return;
       matchmaker.removeUser(socket.user.id);
       const result = roomManager.joinRoom(roomId, socketPlayer());
       if (result.error) return emitFailure(result, callback);
       socket.join(result.room.id);
       io.to(result.room.id).emit('room_update', result.room);
-      return callback?.({ room: result.room });
+      return replyTo(callback)({ room: result.room });
     });
 
-    socket.on('resume_room', ({ roomId } = {}, callback) => {
+    onSocket('resume_room', ({ roomId } = {}, callback) => {
       if (!guardRoomAction(callback)) return;
       matchmaker.removeUser(socket.user.id);
       const result = roomManager.resumeRoom(roomId, socketPlayer());
       if (result.error) return emitFailure(result, callback);
       socket.join(result.room.id);
       io.to(result.room.id).emit('room_update', result.room);
-      return callback?.({ room: result.room });
+      return replyTo(callback)({ room: result.room });
     });
 
-    socket.on('leave_room', ({ roomId } = {}, callback) => {
+    onSocket('leave_room', ({ roomId } = {}, callback) => {
+      if (!guardRoomAction(callback)) return;
       matchmaker.removeUser(socket.user.id);
       const result = roomManager.leaveRoom(roomId, socket.user.id, socket.id);
       if (result.error) return emitFailure(result, callback);
       socket.leave(String(roomId || '').trim().toUpperCase());
       if (result.room) io.to(result.room.id).emit('room_update', result.room);
-      return callback?.(result);
+      return replyTo(callback)(result);
     });
 
     const chatError = (result, callback) => {
-      callback?.(gameErrorPayload(result));
+      replyTo(callback)(gameErrorPayload(result));
       return result;
     };
 
-    socket.on('chat_message', ({ roomId, text } = {}, callback) => {
+    onSocket('chat_message', ({ roomId, text } = {}, callback) => {
       const chatLimit = chatLimiter.consume(`chat:${socket.user.id}`);
       if (!chatLimit.allowed) {
         return chatError({
@@ -638,14 +702,23 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
         text: trimmed,
         at: Date.now(),
       });
-      return callback?.({ ok: true, id });
+      return replyTo(callback)({ ok: true, id });
     });
 
-    socket.on('make_move', ({ roomId, index } = {}, callback) => runGameAction(() => roomManager.makeMove(roomId, index, socket.user.id, socket.id), callback));
-    socket.on('ready_next_round', ({ roomId } = {}, callback) => runGameAction(() => roomManager.readyForNextRound(roomId, socket.user.id, socket.id), callback));
-    socket.on('request_rematch', ({ roomId } = {}, callback) => runGameAction(() => roomManager.requestRematch(roomId, socket.user.id, socket.id), callback));
+    onSocket('make_move', ({ roomId, index } = {}, callback) => {
+      if (!guardRoomAction(callback)) return;
+      return runGameAction(() => roomManager.makeMove(roomId, index, socket.user.id, socket.id), callback);
+    });
+    onSocket('ready_next_round', ({ roomId } = {}, callback) => {
+      if (!guardRoomAction(callback)) return;
+      return runGameAction(() => roomManager.readyForNextRound(roomId, socket.user.id, socket.id), callback);
+    });
+    onSocket('request_rematch', ({ roomId } = {}, callback) => {
+      if (!guardRoomAction(callback)) return;
+      return runGameAction(() => roomManager.requestRematch(roomId, socket.user.id, socket.id), callback);
+    });
 
-    socket.on('find_match', (_payload, callback) => {
+    onSocket('find_match', (_payload, callback) => {
       if (!guardRoomAction(callback)) return;
       const activeRoom = roomManager.findActiveRoomForUser(socket.user.id);
       if (activeRoom) return emitFailure({
@@ -655,11 +728,11 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
       }, callback);
       const queued = matchmaker.addToQueue(socketPlayer());
       if (!queued) return emitFailure({ error: 'You are already searching for a match', code: 'ALREADY_MATCHMAKING' }, callback);
-      return callback?.({ queued: true });
+      return replyTo(callback)({ queued: true });
     });
-    socket.on('cancel_matchmaking', (_payload, callback) => {
+    onSocket('cancel_matchmaking', (_payload, callback) => {
       matchmaker.removeUser(socket.user.id);
-      callback?.({ cancelled: true });
+      replyTo(callback)({ cancelled: true });
     });
 
     socket.on('disconnect', () => {

@@ -2,11 +2,18 @@ const path = require('path');
 
 function loadConfig(overrides = {}) {
   const nodeEnv = overrides.nodeEnv || process.env.NODE_ENV || 'development';
-  const jwtSecret = overrides.jwtSecret || process.env.JWT_SECRET || (nodeEnv === 'production' ? '' : 'development-only-change-me');
+  // A known development secret must never be usable by a deployed process.
+  // Test runtimes get an explicit throwaway secret; every other environment
+  // must supply its own JWT_SECRET.
+  const fallbackSecret = nodeEnv === 'test' ? 'test-only-noughtline-secret' : '';
+  const jwtSecret = overrides.jwtSecret || process.env.JWT_SECRET || fallbackSecret;
   const deploymentUrl = process.env.RENDER_EXTERNAL_URL || 'http://localhost:5173';
 
   if (!jwtSecret) {
-    throw new Error('JWT_SECRET is required in production');
+    throw new Error('JWT_SECRET is required');
+  }
+  if (nodeEnv !== 'test' && (jwtSecret.length < 32 || jwtSecret === 'replace-with-at-least-32-random-characters')) {
+    throw new Error('JWT_SECRET must be a random value of at least 32 characters');
   }
 
   return {

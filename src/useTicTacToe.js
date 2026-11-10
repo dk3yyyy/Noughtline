@@ -315,6 +315,6 @@ export default function useTicTacToe(gameConfig, setGameConfig, sounds, user) {
   return {
     board, handleClick, winner, seriesWinner, winningLine, isXNext, resetGame, mySymbol,
     gameStatus, round, score, readyNextRound, requestRematch, roomPlayers,
-    disconnectDeadline, completionReason, actionError,
+    disconnectDeadline, completionReason, actionError, isActionPending,
   };
 }

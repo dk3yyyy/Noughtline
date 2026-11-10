@@ -41,6 +41,8 @@ export default function GameScreen({
   resultWinner,
   ratingChip,
   opponentDisconnected,
+  isConnected,
+  isActionPending,
   onBack,
   onReadyNextRound,
   onRematch,
@@ -83,6 +85,7 @@ export default function GameScreen({
         ? `Opponent disconnected · ${disconnectSeconds > 0 ? `${disconnectSeconds}s to forfeit` : 'resolving match…'}`
         : 'Connection interrupted · reconnecting…';
     }
+    if (isConnected === false) return 'Connection lost — reconnecting…';
     if (gameStatus === 'cancelled') return 'Match cancelled — neither player returned in time.';
     if (resultWinner === 'Draw') {
       if (tournamentRoom) return 'Draw — the lower seed advances on a tie-break.';
@@ -195,7 +198,7 @@ export default function GameScreen({
             size={size}
             winningLine={winningLine || []}
             onPlay={onPlay}
-            disabled={gameStatus !== 'active' || Boolean(resultWinner) || (multiplayer && !myTurn)}
+            disabled={gameStatus !== 'active' || Boolean(resultWinner) || isConnected === false || Boolean(isActionPending) || (multiplayer && !myTurn)}
           />
         </div>
 
