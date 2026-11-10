@@ -16,18 +16,27 @@ function loadConfig(overrides = {}) {
     throw new Error('JWT_SECRET must be a random value of at least 32 characters');
   }
 
+  const databasePath = overrides.databasePath || process.env.DATABASE_PATH || path.join(__dirname, 'tic-tac.db');
+  const ephemeralDatabase = /^\/tmp\//.test(databasePath);
+  const paystackSecretKey = overrides.paystackSecretKey ?? process.env.PAYSTACK_SECRET_KEY ?? '';
+  if (nodeEnv === 'production' && ephemeralDatabase) {
+    console.warn('DATABASE_PATH is under /tmp; data will be lost on restart. Payments are disabled.');
+  }
+
   return {
     nodeEnv,
     port: Number(overrides.port || process.env.PORT || 3000),
     jwtSecret,
+    ephemeralDatabase,
     jwtExpiresIn: overrides.jwtExpiresIn || process.env.JWT_EXPIRES_IN || '30d',
-    databasePath: overrides.databasePath || process.env.DATABASE_PATH || path.join(__dirname, 'tic-tac.db'),
+    databasePath,
     staticDir: overrides.staticDir || process.env.STATIC_DIR || path.resolve(__dirname, '..', 'dist'),
     corsOrigins: (overrides.corsOrigins || process.env.CORS_ORIGINS || deploymentUrl)
       .split(',')
       .map((value) => value.trim())
       .filter(Boolean),
-    paystackSecretKey: overrides.paystackSecretKey ?? process.env.PAYSTACK_SECRET_KEY ?? '',
+    // Never take money against a database that will disappear on restart.
+    paystackSecretKey: ephemeralDatabase ? '' : paystackSecretKey,
     googleClientId: overrides.googleClientId ?? process.env.GOOGLE_CLIENT_ID ?? '',
     publicAppUrl: overrides.publicAppUrl || process.env.PUBLIC_APP_URL || deploymentUrl,
     roomActionRateLimit: Number(overrides.roomActionRateLimit || process.env.ROOM_ACTION_RATE_LIMIT || 30),

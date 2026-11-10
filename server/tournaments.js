@@ -344,6 +344,15 @@ function createTournamentService({ db, economy, roomManager, now = () => Date.no
         roomManager.deleteRoom(room.id);
         continue;
       }
+      if (room && room.state.status === 'active') {
+        // Both players stayed connected but stopped moving. Resolve the
+        // stalemate deterministically instead of leaving the bracket open
+        // forever.
+        if (room.updatedAt + WALKOVER_AFTER_MS > currentMs) continue;
+        completeMatchAndAdvance(match.id, lowerSeedWinnerId(match), currentMs);
+        roomManager.deleteRoom(room.id);
+        continue;
+      }
       if (room && !['waiting', 'paused'].includes(room.state.status)) continue;
       if (room && room.roundHistory.length > 0) continue; // play started: disconnect grace owns it
       if (dbTimeToMs(match.created_at) + WALKOVER_AFTER_MS > currentMs) continue;
