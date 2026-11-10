@@ -231,8 +231,14 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
   }));
   app.use(cors({ origin: config.corsOrigins }));
 
+  const webhookLimiter = rateLimit({
+    windowMs: 60_000,
+    limit: config.nodeEnv === 'test' ? 10000 : 60,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+  });
   // Paystack signs the exact raw request bytes.
-  app.post('/api/payments/paystack/webhook', express.raw({ type: 'application/json', limit: '128kb' }), async (req, res) => {
+  app.post('/api/payments/paystack/webhook', webhookLimiter, express.raw({ type: 'application/json', limit: '128kb' }), async (req, res) => {
     if (!config.paystackSecretKey) return res.status(503).json({ error: 'Payments are not configured' });
     const signature = req.headers['x-paystack-signature'];
     const expected = crypto.createHmac('sha512', config.paystackSecretKey).update(req.body).digest('hex');
