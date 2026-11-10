@@ -1443,6 +1443,21 @@
   font-weight: 500;
 }
 
+.diff-btn {
+  min-height: 56px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 3px;
+}
+
+.diff-btn small {
+  color: var(--text-muted);
+  font-size: var(--fs-xs);
+  font-weight: 400;
+}
+
 .toggle-btn.active,
 .pill-btn.active,
 .diff-btn.active {

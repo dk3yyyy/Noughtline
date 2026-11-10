@@ -16,16 +16,20 @@ The original frontend-only upgrade plan has been superseded by the secure-founda
 - Unit, integration, migration and two-client Socket.IO tests.
 - Lint/build/audit quality gates and GitHub Actions CI.
 
-## Next product phase
+## Completed product capabilities
 
-1. Real Google OAuth account linking and guest-account upgrade.
-2. Paystack test-mode end-to-end checkout with a verified-email account.
-3. Match history and ledger screens in the UI.
-4. Ranked ELO and separate casual/ranked queues.
-5. Daily rewards, quests and achievements using the ledger.
-6. Additional Coin and Gem cosmetic categories.
-7. PostgreSQL migrations and Redis-backed room/presence state before horizontal scaling.
-8. Spectators, invitations, social features and tournaments.
+- Server-verified Google account linking and guest-account upgrade.
+- Paystack package initialization, verification, webhook handling and idempotent credits.
+- Match history, wallet ledger, ranked ELO, and separate ranked/casual matchmaking queues.
+- Daily rewards, quests and achievements backed by the server economy.
+- Tournaments, private room invitations, room chat and cosmetic inventory.
+
+## Remaining product and infrastructure work
+
+- Run and document a Paystack test-mode end-to-end checkout with a verified-email account before enabling live payments.
+- Add further Coin and Gem cosmetic categories.
+- Migrate SQLite to PostgreSQL and add shared room/presence state before horizontal scaling.
+- Add spectators, a social graph and seasonal progression.
 
 ## Production gate
 

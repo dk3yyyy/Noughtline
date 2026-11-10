@@ -15,6 +15,23 @@
   margin-top: 22px;
 }
 
+.multiplayer-menu .match-queue-choice {
+  min-height: 58px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 3px;
+  text-align: left;
+}
+
+.multiplayer-menu .match-queue-choice small {
+  color: inherit;
+  font-size: var(--fs-xs);
+  font-weight: 400;
+  opacity: 0.8;
+}
+
 .multiplayer-menu .config-section + .config-section {
   margin-top: 18px;
 }

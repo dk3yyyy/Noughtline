@@ -25,6 +25,7 @@ import {
 } from './services/tournaments';
 import { deltaLabel, formatRating, isRankedRoom, ratingDelta } from './services/ratings';
 import { normalizeThemePreference, resolveTheme } from './services/theme';
+import { chooseAIMove } from './services/ai';
 import { GOOGLE_CLIENT_ID } from './config';
 import { buildGoogleIdConfig, loadGsiScript, normalizeGoogleError, parseProviderResponse, signInAvailability } from './services/google';
 import {
@@ -184,7 +185,10 @@ const SettingsModal = ({ show, onClose, config, setConfig, onExport, onDelete, o
             <span>Sound Effects</span>
           </div>
           <button
+            type="button"
             className={`toggle-switch ${config.sound ? 'on' : 'off'}`}
+            aria-label="Sound Effects"
+            aria-pressed={config.sound}
             onClick={() => setConfig(p => ({ ...p, sound: !p.sound }))}
           >
             <motion.div className="handle" layout />
@@ -841,7 +845,12 @@ const MultiplayerMenu = ({ show, onClose, onHost, onJoin, onPlayStranger }) => {
         <div className="btn-stack">
           <button className="btn-pink" onClick={onHost}>Host Game</button>
           <button className="btn-teal" onClick={onJoin}>Join Game</button>
-          <button className="btn-orange" onClick={onPlayStranger}>Play with Stranger</button>
+          <button className="btn-orange match-queue-choice" onClick={() => onPlayStranger('ranked')}>
+            Ranked Matchmaking <small>Rating and progression rewards</small>
+          </button>
+          <button className="btn-gray match-queue-choice" onClick={() => onPlayStranger('casual')}>
+            Casual Matchmaking <small>No rating changes or match rewards</small>
+          </button>
           <button className="btn-gray" onClick={onClose}>Cancel</button>
         </div>
       </motion.div>
@@ -1079,7 +1088,7 @@ const GameCreatedModal = ({ show, onClose, roomId, onStart }) => {
   );
 };
 
-const SearchingMatchModal = ({ show, onCancel }) => {
+const SearchingMatchModal = ({ show, onCancel, queueType }) => {
   if (!show) return null;
 
   return (
@@ -1099,7 +1108,9 @@ const SearchingMatchModal = ({ show, onCancel }) => {
           </motion.div>
         </div>
         <h2 className="modal-title">Finding Opponent...</h2>
-        <p style={{ color: '#64748b', marginBottom: '2rem' }}>Searching for a worthy stranger...</p>
+        <p style={{ color: '#64748b', marginBottom: '2rem' }}>
+          Searching the {queueType === 'casual' ? 'casual' : 'ranked'} queue...
+        </p>
         <button className="btn-gray" onClick={onCancel}>Cancel</button>
       </motion.div>
     </div>
@@ -1389,58 +1400,11 @@ const useTicTacToe = (gameConfig, setGameConfig, sounds, user) => {
     return null;
   };
 
-  // Client-side Minimax (Only for Singleplayer)
-  const minimax = (squares, depth, isMaximizing, alpha, beta) => {
-    const res = calculateWinner(squares);
-    if (res?.winner === 'O') return 10 - depth;
-    if (res?.winner === 'X') return depth - 10;
-    if (res?.winner === 'Draw') return 0;
-
-    // Depth limit for performance on larger boards
-    if (depth > 3 && boardSize > 3) return 0;
-
-    if (isMaximizing) {
-      let bestScore = -Infinity;
-      for (let i = 0; i < squares.length; i++) {
-        if (!squares[i]) {
-          squares[i] = 'O';
-          let score = minimax(squares, depth + 1, false, alpha, beta);
-          squares[i] = null;
-          bestScore = Math.max(score, bestScore);
-          alpha = Math.max(alpha, bestScore);
-          if (beta <= alpha) break;
-        }
-      }
-      return bestScore;
-    } else {
-      let bestScore = Infinity;
-      for (let i = 0; i < squares.length; i++) {
-        if (!squares[i]) {
-          squares[i] = 'X';
-          let score = minimax(squares, depth + 1, true, alpha, beta);
-          squares[i] = null;
-          bestScore = Math.min(score, bestScore);
-          beta = Math.min(beta, bestScore);
-          if (beta <= alpha) break;
-        }
-      }
-      return bestScore;
-    }
-  };
-
   const makeAIMove = (currentBoard) => {
     const emptyIndices = currentBoard.map((s, i) => s === null ? i : null).filter(i => i !== null);
     if (emptyIndices.length === 0 || winner) return;
 
-    let move;
-    if (difficulty === 'easy') {
-      move = emptyIndices[Math.floor(Math.random() * emptyIndices.length)];
-    } else if (difficulty === 'medium') {
-      if (Math.random() > 0.6) move = findBestMove(currentBoard);
-      else move = emptyIndices[Math.floor(Math.random() * emptyIndices.length)];
-    } else {
-      move = findBestMove(currentBoard);
-    }
+    let move = chooseAIMove(currentBoard, boardSize, difficulty);
 
     if (move === undefined) move = emptyIndices[0];
 
@@ -1456,35 +1420,6 @@ const useTicTacToe = (gameConfig, setGameConfig, sounds, user) => {
       setWinner(result.winner);
       setWinningLine(result.line);
     }
-  };
-
-  const findBestMove = (squares) => {
-    let bestScore = -Infinity;
-    let move;
-
-    // Fast path for first move
-    if (squares.filter(x => x).length === 1 && squares[Math.floor(squares.length / 2)] === null) {
-      return Math.floor(squares.length / 2);
-    }
-
-    // Simplified for large boards if not near end game
-    if (boardSize > 3 && squares.filter(s => s === null).length > 12) {
-      const empty = squares.map((s, i) => s === null ? i : null).filter(i => i !== null);
-      return empty[Math.floor(Math.random() * empty.length)];
-    }
-
-    for (let i = 0; i < squares.length; i++) {
-      if (!squares[i]) {
-        squares[i] = 'O';
-        let score = minimax(squares, 0, false, -Infinity, Infinity);
-        squares[i] = null;
-        if (score > bestScore) {
-          bestScore = score;
-          move = i;
-        }
-      }
-    }
-    return move;
   };
 
   const handleClick = (i) => {
@@ -2307,6 +2242,7 @@ export default function App() {
   const [showJoinModal, setShowJoinModal] = useState(() => Boolean(getInviteRoomId(window.location.pathname)));
   const [recoveryMessage, setRecoveryMessage] = useState('');
   const [isSearching, setIsSearching] = useState(false);
+  const [searchQueueType, setSearchQueueType] = useState('ranked');
   const [showFallbackModal, setShowFallbackModal] = useState(false);
   const [showLeaveRoom, setShowLeaveRoom] = useState(false);
   const [leavePending, setLeavePending] = useState(false);
@@ -2941,13 +2877,14 @@ export default function App() {
 
   const handleAcknowledgeTerminalRoom = performLeaveRoom;
 
-  const handlePlayStranger = () => {
+  const handlePlayStranger = (queueType = 'ranked') => {
     if (!socket.connected) {
       setRecoveryMessage('Reconnect to Noughtline before matchmaking.');
       return;
     }
+    setSearchQueueType(queueType);
     setIsSearching(true);
-    socket.timeout(8_000).emit('find_match', {}, (timeoutError, result) => {
+    socket.timeout(8_000).emit('find_match', { queueType }, (timeoutError, result) => {
       if (timeoutError) {
         setIsSearching(false);
         setRecoveryMessage('Matchmaking did not respond. Try again.');
@@ -3318,6 +3255,7 @@ export default function App() {
 
       <SearchingMatchModal
         show={isSearching}
+        queueType={searchQueueType}
         onCancel={handleCancelSearch}
       />
 
@@ -3668,10 +3606,10 @@ export default function App() {
               <h3>Difficulty</h3>
               <div className="difficulty-list">
                 {[
-                  { id: 'easy', color: 'var(--accent-teal)' },
-                  { id: 'medium', color: 'var(--accent-orange)' },
-                  { id: 'hard', color: 'var(--accent-pink)' },
-                  { id: 'impossible', color: 'var(--accent-purple)' }
+                  { id: 'easy', description: 'Random moves', color: 'var(--accent-teal)' },
+                  { id: 'medium', description: 'Sometimes plans ahead', color: 'var(--accent-orange)' },
+                  { id: 'hard', description: 'Looks ahead 3 moves', color: 'var(--accent-pink)' },
+                  { id: 'impossible', description: 'Perfect on 3×3', color: 'var(--accent-purple)' }
                 ].map(d => (
                   <button
                     key={d.id}
@@ -3679,7 +3617,8 @@ export default function App() {
                     style={{ '--btn-color': d.color }}
                     onClick={() => setGameConfig(prev => ({ ...prev, difficulty: d.id }))}
                   >
-                    {d.id.charAt(0).toUpperCase() + d.id.slice(1)}
+                    <span>{d.id.charAt(0).toUpperCase() + d.id.slice(1)}</span>
+                    <small>{d.description}</small>
                   </button>
                 ))}
               </div>

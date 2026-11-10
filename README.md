@@ -11,12 +11,12 @@ Noughtline combines React, Express, Socket.IO, and SQLite to deliver authenticat
 ## ✨ What you can do
 
 - Single-player Tic-Tac-Toe against local AI on 3×3, 4×4 and 5×5 boards.
-- Authenticated real-time private rooms and matchmaking; private rooms are unranked and cannot mint progression or currency.
+- Authenticated private rooms plus separate ranked and casual matchmaking queues. Ranked matches update rating and progression; casual and private matches are unranked and award no match rewards.
 - Server-validated moves, turns, board bounds, best-of-1/3/5 rounds and rematches.
 - Reconnection revokes the old socket and allows a 30-second grace period before one-time forfeit settlement.
 - Shareable room invitations, refresh recovery, explicit leave/forfeit confirmation, and one-active-room enforcement.
 - Stable multiplayer error codes and per-user lifecycle rate limits; leaving a room is never rate-limited.
-- Transactional match persistence and one-time server-issued XP, win/loss/draw, streak and Coin rewards for eligible matchmaking games.
+- Transactional match persistence and one-time server-issued XP, win/loss/draw, streak and Coin rewards for ranked matchmaking games.
 - Persistent Coins and Gems with an immutable currency ledger.
 - Coin- and Gem-priced avatar inventory with server-side ownership and balance checks.
 - Server-defined Paystack packages with server-side initialization, verification, signed webhook handling and idempotent crediting.
@@ -100,8 +100,8 @@ See [`docs/SECURE_FOUNDATION_PLAN.md`](docs/SECURE_FOUNDATION_PLAN.md), [`docs/P
 
 ## 🗺️ What comes next
 
-Ranked ELO, tournaments, spectators, chat, social accounts, quests, daily rewards, seasonal progression, PostgreSQL and horizontally shared room state are intentionally deferred until this foundation is reviewed and deployed safely.
+Spectators, a social graph, seasonal progression, PostgreSQL and horizontally shared room state remain future work. See the architecture plans for the migration requirements before scaling beyond a single server instance.
 
 ## 📄 License
 
-ISC. A standalone `LICENSE` file should be added before publishing a formal release.
+ISC. See [`LICENSE`](LICENSE).

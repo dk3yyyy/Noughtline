@@ -4,10 +4,11 @@ class Matchmaker {
     this.now = now;
   }
 
-  addToQueue(player) {
+  addToQueue(player, queueType = player.queueType || 'ranked') {
     if (!Number.isSafeInteger(player.userId)) return false;
+    if (!['ranked', 'casual'].includes(queueType)) return false;
     if (this.queue.some((entry) => entry.userId === player.userId)) return false;
-    this.queue.push({ ...player, timestamp: this.now() });
+    this.queue.push({ ...player, queueType, timestamp: this.now() });
     return true;
   }
 
@@ -20,19 +21,17 @@ class Matchmaker {
   }
 
   findMatch(isEligible = () => true) {
-    let player1 = null;
-    while (this.queue.length > 0) {
-      const candidate = this.queue.shift();
-      if (!isEligible(candidate)) continue;
-      if (!player1) {
-        player1 = candidate;
-        continue;
-      }
-      if (player1.socketId !== candidate.socketId && player1.userId !== candidate.userId) {
-        return { player1, player2: candidate };
+    this.queue = this.queue.filter(isEligible);
+    for (let first = 0; first < this.queue.length; first += 1) {
+      for (let second = first + 1; second < this.queue.length; second += 1) {
+        const player1 = this.queue[first];
+        const player2 = this.queue[second];
+        if (player1.queueType !== player2.queueType) continue;
+        if (player1.socketId === player2.socketId || player1.userId === player2.userId) continue;
+        this.queue = this.queue.filter((_, index) => index !== first && index !== second);
+        return { player1, player2 };
       }
     }
-    if (player1) this.queue.unshift(player1);
     return null;
   }
 
