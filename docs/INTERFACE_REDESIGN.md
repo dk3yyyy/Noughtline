@@ -61,6 +61,8 @@ Tokens live in `src/index.css`; component styles in `src/App.css`.
 - Entering a tournament match remembers the bracket in session storage, so the
   “Back to the bracket” action returns to that detail view (even after a
   refresh) instead of the lobby.
+- Opening an invite link takes precedence over auto-resuming an older room, so
+  the pre-filled join form is not replaced by the previous game.
 - AI difficulty has real tactics at every board size (win, block, positional
   preference) instead of the old random cutoff; Impossible is no longer Hard.
 - Game cues are synthesised with WebAudio, so they work offline and under the

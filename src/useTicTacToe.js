@@ -266,10 +266,10 @@ export default function useTicTacToe(gameConfig, setGameConfig, sounds, user) {
     if (moveLockRef.current) return;
     if (winner || board[index] || isActionPending || gameStatus !== 'active') return;
 
-    moveLockRef.current = true;
-    window.setTimeout(() => { moveLockRef.current = false; }, mode === 'multiplayer' ? 800 : 0);
-
     if (mode === 'multiplayer') {
+      // The server owns turns and occupancy; a local time lock here could
+      // swallow a legitimate first move during a fast room update. The
+      // pending flag only guards until the room acknowledges the move.
       if (isXNext !== (mySymbol === 'X')) return;
       setIsActionPending(true);
       socket.emit('make_move', { roomId, index });
@@ -278,6 +278,9 @@ export default function useTicTacToe(gameConfig, setGameConfig, sounds, user) {
     }
 
     if (!isXNext) return;
+
+    moveLockRef.current = true;
+    window.setTimeout(() => { moveLockRef.current = false; }, 0);
 
     const nextBoard = [...board];
     nextBoard[index] = 'X';
