@@ -306,7 +306,7 @@ try {
         const rect = element.getBoundingClientRect();
         return rect.left < -1 || rect.right > window.innerWidth + 1;
       }).map((element) => element.getAttribute('aria-label') || element.textContent.trim().slice(0, 40));
-      const touchTargets = [...document.querySelectorAll('.top-bar button, .bottom-nav button')]
+      const touchTargets = [...document.querySelectorAll('.topbar button, .bottomnav button')]
         .filter((element) => {
           const rect = element.getBoundingClientRect();
           return rect.width > 0 && rect.height > 0;

@@ -143,13 +143,49 @@ export default function PlayScreen({
               )}
               {!connected && <p className="field-note">Reconnect before entering the queue.</p>}
             </div>
+
+            <div className="rules-block">
+              <h3 className="rules-title">How a casual series runs</h3>
+              <ol className="rules-list">
+                <li>
+                  <span className="rule-step">Queue</span>
+                  <span>Only casual players are paired with each other, still by the closest rating in the queue.</span>
+                </li>
+                <li>
+                  <span className="rule-step">Best of three</span>
+                  <span>Same 3 × 3 board and server-validated turns as ranked. Crosses move first each round.</span>
+                </li>
+                <li>
+                  <span className="rule-step">Saved, not paid</span>
+                  <span>The result is written to match history. No XP, coins, quest progress or rating change follows.</span>
+                </li>
+              </ol>
+            </div>
           </section>
           <aside className="play-rail">
+            <section className="panel rail-panel" aria-labelledby="casual-standing-title">
+              <div className="panel-head">
+                <h2 id="casual-standing-title" className="panel-title">Your standing</h2>
+              </div>
+              <dl className="kv-list">
+                <div className="kv"><dt>Rating</dt><dd className="num">{rating === null ? '—' : formatNumber(rating)}</dd></div>
+                <div className="kv"><dt>Series won</dt><dd className="num">{formatNumber(user?.wins || 0)}</dd></div>
+                <div className="kv"><dt>Series lost</dt><dd className="num">{formatNumber(user?.losses || 0)}</dd></div>
+                <div className="kv"><dt>Win streak</dt><dd className="num">{formatNumber(user?.streak || 0)}</dd></div>
+              </dl>
+              <p className="panel-note">Shown for context only. Casual series never move the rating.</p>
+            </section>
             <section className="panel rail-panel" aria-labelledby="casual-rules-title">
               <div className="panel-head">
                 <h2 id="casual-rules-title" className="panel-title">Casual rules</h2>
               </div>
-              <p className="rail-copy">Casual games still use the same server-validated turns and rematch rules. Your ranked rating and progression stay unchanged.</p>
+              <dl className="kv-list">
+                <div className="kv"><dt>Rating</dt><dd>Unchanged</dd></div>
+                <div className="kv"><dt>XP and coins</dt><dd>None</dd></div>
+                <div className="kv"><dt>Quests</dt><dd>No progress</dd></div>
+                <div className="kv"><dt>Match history</dt><dd>Saved</dd></div>
+              </dl>
+              <p className="rail-copy">Turns, moves and rematches use the same server rules as ranked. Only the rewards and rating are switched off.</p>
             </section>
           </aside>
         </div>

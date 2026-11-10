@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import Board from '../Board.jsx';
 import { Avatar, Brand, Chip, Mark } from '../ui.jsx';
+import { seriesKind, SERIES_KIND_LABELS } from '../services/ratings';
 import {
   Check, ChevronLeft, Copy, RotateCcw, Swords, Trophy, Users,
 } from 'lucide-react';
@@ -73,10 +74,11 @@ export default function GameScreen({
   const roundCells = Array.from({ length: rounds }, (_, index) => index + 1);
   const forfeit = ['disconnect_forfeit', 'voluntary_forfeit'].includes(completionReason);
   const roomCode = String(gameConfig?.roomId || '');
-  const tournamentRoom = multiplayer && roomCode.startsWith('TM_');
-  const rankedRoom = multiplayer && roomCode.startsWith('MATCH_');
-  const matchKind = tournamentRoom ? 'Tournament match' : rankedRoom ? 'Ranked duel' : 'Private room';
-  const MatchIcon = tournamentRoom ? Trophy : rankedRoom ? Swords : Users;
+  const kind = multiplayer ? seriesKind(gameConfig?.roomSnapshot, roomCode) : 'practice';
+  const tournamentRoom = kind === 'tournament';
+  const casualRoom = kind === 'casual';
+  const matchKind = kind === 'practice' ? 'Practice' : SERIES_KIND_LABELS[kind];
+  const MatchIcon = tournamentRoom ? Trophy : kind === 'private' ? Users : Swords;
 
   const statusText = () => {
     if (multiplayer && gameStatus === 'waiting') return 'Waiting for your opponent to join…';
@@ -221,9 +223,11 @@ export default function GameScreen({
               )}
             </dl>
             <p className="panel-note">
-              {multiplayer
-                ? 'Every move is validated by the server. A disconnect has 30 seconds before the series is forfeited.'
-                : 'Practice games run in your browser and never affect rating, XP or quests.'}
+              {!multiplayer
+                ? 'Practice games run in your browser and never affect rating, XP or quests.'
+                : casualRoom
+                  ? 'Casual series are server-validated but pay no rating, XP, coins or quest progress.'
+                  : 'Every move is validated by the server. A disconnect has 30 seconds before the series is forfeited.'}
             </p>
           </section>
         </aside>

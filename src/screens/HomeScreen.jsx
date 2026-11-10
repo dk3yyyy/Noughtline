@@ -4,7 +4,7 @@ import { outcomeFor } from '../services/history';
 import { REWARD_TABLE } from '../services/tournaments';
 import { formatNumber, formatCoins } from '../format';
 import {Avatar, Chip, Empty, ErrorNote, Loading, Mark} from '../ui.jsx';
-import { Coins, Gem, Bot, Users, Trophy, Zap, ArrowRight, Flame, Shield } from 'lucide-react';
+import { Coins, Gem, Bot, Users, Trophy, Zap, ArrowRight, Flame, Shield, Swords } from 'lucide-react';
 
 const REWARDS = [
   { label: 'Win a series', xp: 50, coins: 10 },
@@ -153,6 +153,10 @@ export default function HomeScreen({
                   <button type="button" className="btn btn-primary" onClick={onFindMatch}>
                     Find opponent
                     <ArrowRight size={16} aria-hidden="true" />
+                  </button>
+                  <button type="button" className="btn btn-quiet" onClick={() => onNavigate('play', { mode: 'casual' })}>
+                    <Swords size={16} aria-hidden="true" />
+                    Play a casual duel
                   </button>
                   <button type="button" className="btn btn-quiet" onClick={() => onNavigate('play', { mode: 'private' })}>
                     <Users size={16} aria-hidden="true" />

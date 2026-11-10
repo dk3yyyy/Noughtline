@@ -181,3 +181,12 @@ test('GET /api/me/matches enriches each row with the opponent username and avata
   assert.equal(fromO.body[0].opponent_username, xPlayer.user.username);
   assert.equal(fromO.body[0].opponent_avatar, xPlayer.user.avatar);
 });
+
+
+test('GET /api/config reports payments as closed when no key is configured', async (t) => {
+  const runtime = createTestRuntime();
+  t.after(() => runtime.db.close());
+  const response = await request(runtime.app).get('/api/config');
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body, { payments: { configured: false } });
+});
