@@ -35,3 +35,43 @@ jobs:
         run: |
           npm audit --omit=dev --audit-level=high
           npm audit --prefix server --omit=dev --audit-level=high
+
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: verify
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            server/package-lock.json
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Install backend dependencies
+        run: npm ci --prefix server
+      - name: Build
+        run: npm run build
+      - name: Multiplayer E2E
+        run: |
+          JWT_SECRET=ci-e2e-secret-at-least-32-characters \
+          DATABASE_PATH=/tmp/noughtline-ci.db \
+          STATIC_DIR="$PWD/dist" \
+          CORS_ORIGINS=http://127.0.0.1:3100 \
+          PUBLIC_APP_URL=http://127.0.0.1:3100 \
+          NODE_ENV=test \
+          PORT=3100 \
+          node server/index.js > /tmp/noughtline-ci-server.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3100/api/health)" = "200" ] && break
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:3100/api/health
+          CHROMIUM_BIN="$(command -v google-chrome || command -v chromium || command -v chromium-browser)" \
+          E2E_BASE_URL=http://127.0.0.1:3100 \
+          npm run test:e2e

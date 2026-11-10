@@ -352,6 +352,36 @@ test('waiting matches past the walkover deadline advance by lower seed; bracket 
   assert.equal(runtime.db.prepare('SELECT COUNT(*) AS count FROM series_results').get().count, 3, 'only the three played matches recorded results');
 });
 
+test('an active match with no moves past the deadline advances by lower seed', async (t) => {
+  const runtime = createTestRuntime();
+  t.after(() => runtime.db.close());
+  const { sessions, tournamentId } = await filledTournament(runtime);
+  const match = matchesInRound(runtime, tournamentId, 1)[0];
+  const xSeed = runtime.db.prepare('SELECT seed FROM tournament_players WHERE tournament_id = ? AND user_id = ?').get(tournamentId, match.player_x_id).seed;
+  const oSeed = runtime.db.prepare('SELECT seed FROM tournament_players WHERE tournament_id = ? AND user_id = ?').get(tournamentId, match.player_o_id).seed;
+  const xSession = sessions[xSeed - 1];
+  const oSession = sessions[oSeed - 1];
+  const { roomId } = runtime.tournamentService.ensureMatchRoom({ matchId: match.id, userId: xSession.user.id });
+  runtime.roomManager.joinRoom(roomId, { userId: xSession.user.id, socketId: `${roomId}-x`, username: xSession.user.username });
+  runtime.roomManager.joinRoom(roomId, { userId: oSession.user.id, socketId: `${roomId}-o`, username: oSession.user.username });
+  runtime.roomManager.makeMove(roomId, 0, xSession.user.id, `${roomId}-x`);
+
+  let clockMs = Date.now();
+  const clocked = createTournamentService({
+    db: runtime.db,
+    economy: runtime.economy,
+    roomManager: runtime.roomManager,
+    now: () => clockMs,
+  });
+  clockMs += WALKOVER_AFTER_MS + 60_000;
+  clocked.advanceDeadlines();
+
+  const resolved = runtime.db.prepare('SELECT * FROM tournament_matches WHERE id = ?').get(match.id);
+  assert.equal(resolved.status, 'complete');
+  assert.equal(resolved.winner_id, xSession.user.id);
+  assert.equal(runtime.roomManager.getRoom(roomId), undefined);
+});
+
 test('a cancelled match room (both players disconnect) resolves via the walkover rule', async (t) => {
   const runtime = createTestRuntime();
   t.after(() => runtime.db.close());

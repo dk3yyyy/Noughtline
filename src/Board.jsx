@@ -39,7 +39,7 @@ const Board = ({ board, size, winningLine = [], onPlay, disabled = false, locked
     <div
       className={`board board-${size}${locked ? ' is-locked' : ''}`}
       style={{ '--board-size': size, '--cell-pct': `${side * 100}%` }}
-      role="grid"
+      role="group"
       aria-label={`${size} by ${size} board`}
       aria-disabled={disabled || undefined}
     >
@@ -51,12 +51,10 @@ const Board = ({ board, size, winningLine = [], onPlay, disabled = false, locked
           <button
             key={index}
             type="button"
-            role="gridcell"
             className={`board-cell${square ? ' is-filled' : ''}${winning ? ' is-winning' : ''}`}
-            onClick={() => onPlay?.(index)}
-            disabled={disabled || Boolean(square)}
+            onClick={() => { if (!disabled && !square) onPlay?.(index); }}
+            aria-disabled={disabled || Boolean(square) || undefined}
             aria-label={`Row ${row}, column ${column}${square ? `, ${square === 'X' ? 'cross' : 'nought'}` : ', empty'}`}
-            aria-selected={Boolean(square)}
           >
             {square && <Mark symbol={square} strokeWidth={size >= 5 ? 11 : 9} />}
           </button>

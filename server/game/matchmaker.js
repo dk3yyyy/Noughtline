@@ -4,10 +4,11 @@ class Matchmaker {
     this.now = now;
   }
 
-  addToQueue(player) {
+  addToQueue(player, queueType = player.queueType || 'ranked') {
     if (!Number.isSafeInteger(player.userId)) return false;
+    if (!['ranked', 'casual'].includes(queueType)) return false;
     if (this.queue.some((entry) => entry.userId === player.userId)) return false;
-    this.queue.push({ ...player, timestamp: this.now() });
+    this.queue.push({ ...player, queueType, timestamp: this.now() });
     return true;
   }
 
@@ -20,20 +21,33 @@ class Matchmaker {
   }
 
   findMatch(isEligible = () => true) {
-    let player1 = null;
-    while (this.queue.length > 0) {
-      const candidate = this.queue.shift();
-      if (!isEligible(candidate)) continue;
-      if (!player1) {
-        player1 = candidate;
-        continue;
-      }
-      if (player1.socketId !== candidate.socketId && player1.userId !== candidate.userId) {
-        return { player1, player2: candidate };
+    this.queue = this.queue.filter(isEligible);
+    let bestPair = null;
+    let bestRatingGap = Infinity;
+    for (let first = 0; first < this.queue.length; first += 1) {
+      for (let second = first + 1; second < this.queue.length; second += 1) {
+        const player1 = this.queue[first];
+        const player2 = this.queue[second];
+        if (player1.queueType !== player2.queueType) continue;
+        if (player1.socketId === player2.socketId || player1.userId === player2.userId) continue;
+        if (player1.queueType === 'casual') {
+          this.queue = this.queue.filter((_, index) => index !== first && index !== second);
+          return { player1, player2 };
+        }
+        const rating1 = Number.isFinite(player1.rating) ? player1.rating : 1000;
+        const rating2 = Number.isFinite(player2.rating) ? player2.rating : 1000;
+        const ratingGap = Math.abs(rating1 - rating2);
+        if (ratingGap < bestRatingGap) {
+          bestRatingGap = ratingGap;
+          bestPair = [first, second];
+        }
       }
     }
-    if (player1) this.queue.unshift(player1);
-    return null;
+    if (!bestPair) return null;
+    const [first, second] = bestPair;
+    const [player1, player2] = [this.queue[first], this.queue[second]];
+    this.queue = this.queue.filter((_, index) => index !== first && index !== second);
+    return { player1, player2 };
   }
 
   expiredPlayers(timeoutMs) {

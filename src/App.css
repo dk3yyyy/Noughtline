@@ -1081,7 +1081,7 @@
 
 .player-identity { flex: 1; min-width: 240px; }
 .player-name-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.player-name { font-size: 19px; font-weight: 600; letter-spacing: -0.02em; }
+.player-identity .player-name { font-size: 19px; font-weight: 600; letter-spacing: -0.02em; }
 .player-meta { margin-top: 3px; color: var(--muted); font-size: 12.5px; }
 
 .player-level {
@@ -1435,9 +1435,10 @@
   min-height: 40px;
 }
 
-.game-head-center { display: flex; align-items: center; gap: 10px; color: var(--faint); font-size: 12px; }
+.game-head-center { min-width: 0; display: flex; align-items: center; gap: 10px; color: var(--faint); font-size: 12px; }
 .game-mode { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
-.game-room { display: inline-flex; align-items: center; gap: 4px; letter-spacing: 0.02em; }
+.game-room { display: inline-flex; align-items: center; gap: 4px; letter-spacing: 0.02em; min-width: 0; max-width: 100%; }
+.game-room code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .game-head-right { display: flex; align-items: center; gap: 10px; }
 
@@ -1585,10 +1586,10 @@
   transition: background-color 120ms ease;
 }
 
-.board-cell:hover:not(:disabled) { background: var(--raised); }
-.board-cell:active:not(:disabled) { background: var(--raised); }
+.board-cell:hover:not([aria-disabled="true"]) { background: var(--raised); }
+.board-cell:active:not([aria-disabled="true"]) { background: var(--raised); }
 .board-cell.is-filled { background: var(--raised); cursor: default; }
-.board-cell:disabled { opacity: 1; }
+.board-cell[aria-disabled="true"] { opacity: 1; cursor: default; }
 .board-cell.is-winning { background: var(--accent-soft); }
 
 .board-cell .mark { width: 58%; height: 58%; }

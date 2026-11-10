@@ -19,6 +19,40 @@ function withEnvironment(values, run) {
   }
 }
 
+test('refuses to start without a JWT secret outside tests', () => {
+  withEnvironment({ NODE_ENV: undefined, JWT_SECRET: undefined }, () => {
+    assert.throws(() => loadConfig({ nodeEnv: 'development' }), /JWT_SECRET is required/);
+  });
+});
+
+test('uses only the explicit test fallback secret in test runtimes', () => {
+  withEnvironment({ NODE_ENV: 'test', JWT_SECRET: undefined }, () => {
+    assert.equal(loadConfig().jwtSecret, 'test-only-noughtline-secret');
+  });
+});
+
+test('disables payments when the database is on an ephemeral /tmp path', () => {
+  const config = loadConfig({
+    nodeEnv: 'production',
+    jwtSecret: 'production-test-secret-at-least-32-characters',
+    databasePath: '/tmp/noughtline.db',
+    paystackSecretKey: 'sk_test_fake',
+  });
+  assert.equal(config.ephemeralDatabase, true);
+  assert.equal(config.paystackSecretKey, '');
+});
+
+test('keeps payments enabled on a persistent database path', () => {
+  const config = loadConfig({
+    nodeEnv: 'production',
+    jwtSecret: 'production-test-secret-at-least-32-characters',
+    databasePath: '/var/data/noughtline.db',
+    paystackSecretKey: 'sk_test_fake',
+  });
+  assert.equal(config.ephemeralDatabase, false);
+  assert.equal(config.paystackSecretKey, 'sk_test_fake');
+});
+
 test('uses the Render external URL for same-origin production defaults', () => {
   withEnvironment({
     NODE_ENV: 'production',

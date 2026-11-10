@@ -451,7 +451,7 @@ export default function TournamentsScreen({ userId, notify, onEnterMatch, onExit
             <h2 className="panel-title">You won the {roundLabel(lastWin.round)}</h2>
             <p className="panel-sub">
               {lastWin.round < 3
-                ? `The ${roundLabel(lastWin.round + 1)} ${lastWin.round === 2 ? 'starts' : 'start'} when every match in this round settles.`
+                ? `The ${roundLabel(lastWin.round + 1)} ${lastWin.round + 1 === 3 ? 'starts' : 'start'} when every match in this round settles.`
                 : 'The final is settling.'}
               {' '}This page refreshes automatically.
             </p>
