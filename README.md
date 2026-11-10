@@ -89,7 +89,7 @@ The tests cover unauthenticated route rejection, removal of the fake deposit pat
 
 Before deployment:
 
-1. Set a strong `JWT_SECRET`, exact `CORS_ORIGINS`, production `PUBLIC_APP_URL`, persistent `DATABASE_PATH`, the Paystack secret and the Google OAuth client ID (`GOOGLE_CLIENT_ID`).
+1. Set a strong `JWT_SECRET`, exact `CORS_ORIGINS`, production `PUBLIC_APP_URL`, a persistent `DATABASE_PATH` such as `/var/data/noughtline.db`, the Paystack secret and the Google OAuth client ID (`GOOGLE_CLIENT_ID`). See [`docs/render-persistent-storage.md`](docs/render-persistent-storage.md) for the Render disk setup.
 2. Configure the Paystack webhook to `POST /api/payments/paystack/webhook`.
 3. Point `GOOGLE_CLIENT_ID` at a Google Cloud OAuth 2.0 client (Web application type, authorized JavaScript origins set to the app origin) so players can link a verified email and buy Gems.
 4. Put the service behind TLS and a trusted reverse proxy.
