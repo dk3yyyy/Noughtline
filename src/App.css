@@ -715,8 +715,9 @@
 .mode-panel { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
 .mode-icon { color: var(--faint); }
 .mode-title { font-size: 15px; }
-.mode-copy { color: var(--muted); font-size: 12.5px; line-height: 1.55; min-height: 58px; }
-.mode-panel .btn { margin-top: 4px; }
+.mode-copy { color: var(--muted); font-size: 12.5px; line-height: 1.55; }
+.mode-panel .btn { margin-top: auto; }
+.fact-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 2px; }
 
 .reward-table { margin-top: 14px; }
 
@@ -1804,7 +1805,11 @@
 .bracket-round-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
 .bracket-round-head h3 { font-size: 12.5px; font-weight: 500; color: var(--muted); }
 .bracket-round-meta { color: var(--faint); font-size: 10.5px; }
-.bracket-matches { list-style: none; display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; }
+.bracket-matches { list-style: none; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.bracket-matches.count-1 { grid-template-columns: minmax(240px, 340px); }
+
+.detail-prizes { margin-top: var(--gap); }
+.detail-prizes .tournament-prizes { margin: 14px 0 0; }
 
 .bracket-match {
   padding: 10px 12px;

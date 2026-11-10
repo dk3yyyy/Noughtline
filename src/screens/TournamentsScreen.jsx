@@ -232,7 +232,7 @@ export default function TournamentsScreen({ userId, notify, onEnterMatch, onExit
         notify('The match room could not be opened. Try again.', 'error');
         return;
       }
-      const result = await onEnterMatch(roomId);
+      const result = await onEnterMatch(roomId, detailId);
       if (uidRef.current !== uid) return;
       if (result?.error) {
         if (!['ACTIVE_ROOM_EXISTS', 'RATE_LIMITED'].includes(result.code)) {
@@ -450,7 +450,9 @@ export default function TournamentsScreen({ userId, notify, onEnterMatch, onExit
           <div>
             <h2 className="panel-title">You won the {roundLabel(lastWin.round)}</h2>
             <p className="panel-sub">
-              {lastWin.round < 3 ? `The ${roundLabel(lastWin.round + 1)} starts when every match in this round settles.` : 'The final is settling.'}
+              {lastWin.round < 3
+                ? `The ${roundLabel(lastWin.round + 1)} ${lastWin.round === 2 ? 'starts' : 'start'} when every match in this round settles.`
+                : 'The final is settling.'}
               {' '}This page refreshes automatically.
             </p>
           </div>
@@ -538,7 +540,7 @@ export default function TournamentsScreen({ userId, notify, onEnterMatch, onExit
                       <h3 id={`round-${group.round}`}>{roundLabel(group.round)}</h3>
                       <span className="bracket-round-meta num">{done}/{roundMatches.length} settled</span>
                     </div>
-                    <ul className="bracket-matches">
+                    <ul className={`bracket-matches count-${roundMatches.length}`}>
                       {roundMatches.map((row) => {
                         const involvesMe = sameUser(row.player_x_id, userId) || sameUser(row.player_o_id, userId);
                         const xWon = row.status === 'complete' && row.winner_id != null && sameUser(row.winner_id, row.player_x_id);
@@ -570,6 +572,24 @@ export default function TournamentsScreen({ userId, notify, onEnterMatch, onExit
           )}
         </section>
       </div>
+
+      <section className="panel detail-prizes" aria-labelledby="detail-prizes-title">
+        <div className="panel-head">
+          <div>
+            <h2 id="detail-prizes-title" className="panel-title">Prizes</h2>
+            <p className="panel-sub">Paid once on completion. Tournament matches do not change rating or pay normal series rewards.</p>
+          </div>
+          <Trophy size={17} className="panel-icon" aria-hidden="true" />
+        </div>
+        <div className="tournament-prizes">
+          <div className="prize"><span className="prize-place"><Crown size={15} aria-hidden="true" /> Champion</span><span className="prize-value num">{REWARD_TABLE.champion.coins} coins · {REWARD_TABLE.champion.gems} gems</span></div>
+          <div className="prize"><span className="prize-place">Runner-up</span><span className="prize-value num">{REWARD_TABLE.runnerUp.coins} coins</span></div>
+          <div className="prize"><span className="prize-place">Semifinalist</span><span className="prize-value num">{REWARD_TABLE.semifinalist.coins} coins</span></div>
+        </div>
+        <p className="panel-note">
+          A drawn single-round match advances the lower seed. A match where neither player arrives is walked over the same way after ten minutes.
+        </p>
+      </section>
 
       <Dialog
         open={confirmCancel}

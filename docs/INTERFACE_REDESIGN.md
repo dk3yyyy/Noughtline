@@ -58,6 +58,9 @@ Tokens live in `src/index.css`; component styles in `src/App.css`.
   and always report a failure).
 - Tournaments can be cancelled by their creator from the bracket screen, using
   the existing server endpoint.
+- Entering a tournament match remembers the bracket in session storage, so the
+  “Back to the bracket” action returns to that detail view (even after a
+  refresh) instead of the lobby.
 - AI difficulty has real tactics at every board size (win, block, positional
   preference) instead of the old random cutoff; Impossible is no longer Hard.
 - Game cues are synthesised with WebAudio, so they work offline and under the

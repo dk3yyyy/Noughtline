@@ -88,6 +88,7 @@ const useSound = (enabled) => {
 /* ---------------- toasts ---------------- */
 
 const TOAST_DURATION_MS = 3600;
+const TOURNAMENT_STORAGE_KEY = 'noughtline_tournament_id';
 
 const useToasts = () => {
   const [toasts, setToasts] = useState([]);
@@ -127,7 +128,9 @@ export default function App() {
   const [view, setView] = useState('HOME');
   const [playMode, setPlayMode] = useState('ranked');
   const [profileTab, setProfileTab] = useState('overview');
-  const [tournamentFocus, setTournamentFocus] = useState(null);
+  const [tournamentFocus, setTournamentFocus] = useState(() => {
+    try { return window.sessionStorage.getItem(TOURNAMENT_STORAGE_KEY) || null; } catch { return null; }
+  });
 
   const [showSettings, setShowSettings] = useState(false);
   const [showBuyGems, setShowBuyGems] = useState(false);
@@ -605,7 +608,7 @@ export default function App() {
     if (getInviteRoomId(window.location.pathname)) window.history.replaceState({}, '', '/');
   };
 
-  const handleJoinRoom = (rawCode) => new Promise((resolve) => {
+  const handleJoinRoom = (rawCode, tournamentId = null) => new Promise((resolve) => {
     if (!socket.connected) {
       resolve({ error: 'Still connecting to Noughtline. Try again in a moment.' });
       return;
@@ -624,6 +627,12 @@ export default function App() {
         if (result.code === 'ACTIVE_ROOM_EXISTS' || result.code === 'RATE_LIMITED') handleLifecycleFailure(result);
         resolve(result);
         return;
+      }
+      if (tournamentId) {
+        // Remember the bracket so a completed/forfeited tournament match can
+        // return to its detail view, even after a refresh.
+        try { window.sessionStorage.setItem(TOURNAMENT_STORAGE_KEY, tournamentId); } catch { /* private mode */ }
+        setTournamentFocus(tournamentId);
       }
       enterMultiplayerRoom(result.room);
       clearInvitePath();
@@ -660,7 +669,12 @@ export default function App() {
         return;
       }
       clearRoomAndReturnHome();
-      if (leavingTournament) setView('TOURNAMENTS');
+      if (leavingTournament) {
+        let tid = null;
+        try { tid = window.sessionStorage.getItem(TOURNAMENT_STORAGE_KEY); } catch { /* private mode */ }
+        setTournamentFocus(tid);
+        setView('TOURNAMENTS');
+      }
     });
   };
 
@@ -669,6 +683,9 @@ export default function App() {
     const clear = () => {
       clearActiveRoom(localStorage);
       setGameConfig((previous) => ({ ...previous, roomId: null, opponentName: null, opponentAvatar: null, roomSnapshot: null }));
+      let tid = null;
+      try { tid = window.sessionStorage.getItem(TOURNAMENT_STORAGE_KEY); } catch { /* private mode */ }
+      setTournamentFocus(tid);
       setView('TOURNAMENTS');
       window.scrollTo({ top: 0 });
     };
