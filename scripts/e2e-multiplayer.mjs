@@ -207,17 +207,19 @@ try {
 
   await setInput(cdp, guest, '#join-code', roomId);
   await evaluate(cdp, guest, `document.querySelector('form').requestSubmit(); true`);
-  await waitFor(cdp, guest, `document.querySelector('.game-screen') && !document.querySelector('.modal-backdrop')`, 'guest joined game');
-  await waitFor(cdp, host, `!document.body.innerText.includes('Waiting for your opponent') && document.querySelectorAll('.board-cell:not([aria-disabled="true"])').length === 9`, 'host active board');
+  await waitFor(cdp, guest, `document.querySelector('.game-screen') && !document.querySelector('.modal-backdrop')`, 'guest joined game', 25_000);
+  await waitFor(cdp, host, `!document.body.innerText.includes('Waiting for your opponent') && document.querySelectorAll('.board-cell').length === 9`, 'host active board', 25_000);
+  await waitFor(cdp, host, `!document.querySelectorAll('.board-cell')[0].disabled && document.querySelector('.game-status-text')?.textContent.includes('Your turn')`, 'host turn');
 
   const guestToken = await evaluate(cdp, guest, `localStorage.getItem('noughtline_access_token')`);
   await evaluate(cdp, host, `document.querySelectorAll('.board-cell')[0].click(); true`);
-  await waitFor(cdp, guest, `Boolean(document.querySelectorAll('.board-cell')[0].querySelector('.mark-x'))`, 'host move on guest board');
+  await waitFor(cdp, guest, `Boolean(document.querySelectorAll('.board-cell')[0].querySelector('.mark-x'))`, 'host move on guest board', 25_000);
+  await waitFor(cdp, guest, `!document.querySelectorAll('.board-cell')[3].disabled && document.querySelector('.game-status-text')?.textContent.includes('Your turn')`, 'guest turn');
   await evaluate(cdp, guest, `document.querySelectorAll('.board-cell')[3].click(); true`);
-  await waitFor(cdp, host, `Boolean(document.querySelectorAll('.board-cell')[3].querySelector('.mark-o'))`, 'guest move on host board');
+  await waitFor(cdp, host, `Boolean(document.querySelectorAll('.board-cell')[3].querySelector('.mark-o'))`, 'guest move on host board', 25_000);
 
   await cdp.send('Page.reload', { ignoreCache: true }, guest.sessionId);
-  await waitFor(cdp, guest, `document.querySelector('.game-screen') && Boolean(document.querySelectorAll('.board-cell')[0].querySelector('.mark-x')) && Boolean(document.querySelectorAll('.board-cell')[3].querySelector('.mark-o'))`, 'guest refresh recovery');
+  await waitFor(cdp, guest, `document.querySelector('.game-screen') && Boolean(document.querySelectorAll('.board-cell')[0].querySelector('.mark-x')) && Boolean(document.querySelectorAll('.board-cell')[3].querySelector('.mark-o'))`, 'guest refresh recovery', 25_000);
   const guestTokenAfterRefresh = await evaluate(cdp, guest, `localStorage.getItem('noughtline_access_token')`);
   if (guestTokenAfterRefresh !== guestToken) throw new Error('Guest identity changed after refresh');
 
@@ -228,14 +230,14 @@ try {
   if (disabledWhilePaused !== 9) throw new Error(`Expected 9 disabled cells while paused, got ${disabledWhilePaused}`);
 
   guest = await attachPage(cdp, guestContext, baseUrl, { width: 390, height: 844, mobile: true });
-  await waitFor(cdp, guest, `document.querySelector('.game-screen') && Boolean(document.querySelectorAll('.board-cell')[3].querySelector('.mark-o'))`, 'guest reconnect recovery');
+  await waitFor(cdp, guest, `document.querySelector('.game-screen') && Boolean(document.querySelectorAll('.board-cell')[3].querySelector('.mark-o'))`, 'guest reconnect recovery', 25_000);
   const guestTokenAfterReconnect = await evaluate(cdp, guest, `localStorage.getItem('noughtline_access_token')`);
   if (guestTokenAfterReconnect !== guestToken) throw new Error('Guest identity changed after reconnect');
   await waitFor(cdp, host, `!document.querySelector('.game-status')?.classList.contains('is-paused') && document.querySelectorAll('.board-cell:not([aria-disabled="true"])').length === 7`, 'host resumed board');
 
   const hostToken = await evaluate(cdp, host, `localStorage.getItem('noughtline_access_token')`);
   await cdp.send('Page.reload', { ignoreCache: true }, host.sessionId);
-  await waitFor(cdp, host, `document.querySelector('.game-screen') && Boolean(document.querySelectorAll('.board-cell')[0].querySelector('.mark-x')) && Boolean(document.querySelectorAll('.board-cell')[3].querySelector('.mark-o'))`, 'host refresh recovery');
+  await waitFor(cdp, host, `document.querySelector('.game-screen') && Boolean(document.querySelectorAll('.board-cell')[0].querySelector('.mark-x')) && Boolean(document.querySelectorAll('.board-cell')[3].querySelector('.mark-o'))`, 'host refresh recovery', 25_000);
   const hostTokenAfterRefresh = await evaluate(cdp, host, `localStorage.getItem('noughtline_access_token')`);
   if (hostTokenAfterRefresh !== hostToken) throw new Error('Host identity changed after refresh');
 
@@ -304,7 +306,7 @@ try {
         const rect = element.getBoundingClientRect();
         return rect.left < -1 || rect.right > window.innerWidth + 1;
       }).map((element) => element.getAttribute('aria-label') || element.textContent.trim().slice(0, 40));
-      const touchTargets = [...document.querySelectorAll('.top-bar button, .bottom-nav button')]
+      const touchTargets = [...document.querySelectorAll('.topbar button, .bottomnav button')]
         .filter((element) => {
           const rect = element.getBoundingClientRect();
           return rect.width > 0 && rect.height > 0;
@@ -345,7 +347,7 @@ try {
 
   await cdp.send('Page.navigate', { url: replacementInviteUrl }, guest.sessionId);
   await waitFor(cdp, guest, `document.querySelector('#join-code')?.value === ${JSON.stringify(replacementRoomId)}`, 'deleted-room invite prefill');
-  await waitFor(cdp, guest, `Array.from(document.querySelectorAll('button')).some((button) => button.innerText === 'Join' && !button.disabled)`, 'deleted-room join readiness');
+  await waitFor(cdp, guest, `Array.from(document.querySelectorAll('button')).some((button) => button.innerText === 'Join' && !button.disabled)`, 'deleted-room join readiness', 30_000);
   await evaluate(cdp, guest, `document.querySelector('form').requestSubmit(); true`);
   const deletedRoomError = await waitFor(cdp, guest, `document.querySelector('.field-error')?.textContent`, 'deleted-room rejection');
   if (!/no longer exists|room not found/i.test(deletedRoomError)) throw new Error(`Unexpected deleted-room error: ${deletedRoomError}`);

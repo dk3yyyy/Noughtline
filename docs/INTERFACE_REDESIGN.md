@@ -58,6 +58,17 @@ Tokens live in `src/index.css`; component styles in `src/App.css`.
   and always report a failure).
 - Tournaments can be cancelled by their creator from the bracket screen, using
   the existing server endpoint.
+- Entering a tournament match remembers the bracket in session storage, so the
+  “Back to the bracket” action returns to that detail view (even after a
+  refresh) instead of the lobby.
+- Opening an invite link takes precedence over auto-resuming an older room, so
+  the pre-filled join form is not replaced by the previous game.
+- Casual and ranked matchmaking share a room prefix; the game view now reads the
+  server's reward flag to label and explain casual series correctly, and Home
+  links straight to the casual queue.
+- The game view asks for the current room once after its listener mounts, so a
+  first move that lands during the join handshake cannot leave the board stale.
+- Phone shell controls, tabs and filters are 44px targets.
 - AI difficulty has real tactics at every board size (win, block, positional
   preference) instead of the old random cutoff; Impossible is no longer Hard.
 - Game cues are synthesised with WebAudio, so they work offline and under the

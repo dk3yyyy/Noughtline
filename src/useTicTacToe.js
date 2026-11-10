@@ -91,7 +91,19 @@ export default function useTicTacToe(gameConfig, setGameConfig, sounds, user) {
       socket.on('game_error', handleGameError);
       if (roomSnapshot?.id === roomId) handleRoomUpdate(roomSnapshot);
 
+      // The room can advance between the join ack and this listener mounting
+      // (the opponent's first move, a forfeit, a reconnect). Pull the current
+      // room once after subscribing so a missed broadcast can never leave the
+      // board stale.
+      const refreshTimer = window.setTimeout(() => {
+        socket.timeout(6000).emit('resume_room', { roomId }, (timeoutError, result) => {
+          if (timeoutError || !result?.room) return;
+          handleRoomUpdate(result.room);
+        });
+      }, 0);
+
       return () => {
+        window.clearTimeout(refreshTimer);
         socket.off('room_update', handleRoomUpdate);
         socket.off('game_error', handleGameError);
       };
@@ -266,10 +278,10 @@ export default function useTicTacToe(gameConfig, setGameConfig, sounds, user) {
     if (moveLockRef.current) return;
     if (winner || board[index] || isActionPending || gameStatus !== 'active') return;
 
-    moveLockRef.current = true;
-    window.setTimeout(() => { moveLockRef.current = false; }, mode === 'multiplayer' ? 800 : 0);
-
     if (mode === 'multiplayer') {
+      // The server owns turns and occupancy; a local time lock here could
+      // swallow a legitimate first move during a fast room update. The
+      // pending flag only guards until the room acknowledges the move.
       if (isXNext !== (mySymbol === 'X')) return;
       setIsActionPending(true);
       socket.emit('make_move', { roomId, index });
@@ -278,6 +290,9 @@ export default function useTicTacToe(gameConfig, setGameConfig, sounds, user) {
     }
 
     if (!isXNext) return;
+
+    moveLockRef.current = true;
+    window.setTimeout(() => { moveLockRef.current = false; }, 0);
 
     const nextBoard = [...board];
     nextBoard[index] = 'X';

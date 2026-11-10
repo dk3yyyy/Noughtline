@@ -41,6 +41,24 @@ export function isRankedRoom(room) {
   return Boolean(room) && room.rewardEligible === true;
 }
 
+// What kind of series the player is in, from the room id plus the server's
+// reward flag. Matchmaking rooms share the MATCH_ prefix; casual ones are
+// created with rewardEligible:false, so the prefix alone cannot tell them
+// apart. Tournament rooms are TM_, everything else is a private room.
+export function seriesKind(room, roomId) {
+  const id = String(roomId || room?.id || '').toUpperCase();
+  if (id.startsWith('TM_')) return 'tournament';
+  if (id.startsWith('MATCH_')) return isRankedRoom(room) ? 'ranked' : 'casual';
+  return 'private';
+}
+
+export const SERIES_KIND_LABELS = Object.freeze({
+  ranked: 'Ranked duel',
+  casual: 'Casual duel',
+  tournament: 'Tournament match',
+  private: 'Private room',
+});
+
 function toRating(value) {
   if (value === null || value === undefined || value === '') return null;
   const n = Number(value);

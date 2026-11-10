@@ -5,6 +5,7 @@ import {
   ratingDelta,
   deltaLabel,
   isRankedRoom,
+  seriesKind,
 } from '../src/services/ratings.js';
 
 test('formatRating renders integer ratings with thousands separators', () => {
@@ -92,4 +93,16 @@ test('isRankedRoom recognises a full public room payload', () => {
     state: { status: 'waiting' },
   };
   assert.equal(isRankedRoom(publicRoom), true);
+});
+
+
+test('seriesKind separates ranked, casual, private and tournament rooms', () => {
+  assert.equal(seriesKind({ rewardEligible: true }, 'MATCH_ABC'), 'ranked');
+  assert.equal(seriesKind({ rewardEligible: false }, 'MATCH_ABC'), 'casual');
+  assert.equal(seriesKind({ rewardEligible: false }, 'ROOM_ABC'), 'private');
+  assert.equal(seriesKind({ rewardEligible: false }, 'TM_ABC'), 'tournament');
+  // The room snapshot may arrive a beat after the id; the prefix still reads.
+  assert.equal(seriesKind(null, 'MATCH_ABC'), 'casual');
+  assert.equal(seriesKind(undefined, 'ROOM_ABC'), 'private');
+  assert.equal(seriesKind(undefined, ''), 'private');
 });

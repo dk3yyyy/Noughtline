@@ -4,7 +4,7 @@ import { outcomeFor } from '../services/history';
 import { REWARD_TABLE } from '../services/tournaments';
 import { formatNumber, formatCoins } from '../format';
 import {Avatar, Chip, Empty, ErrorNote, Loading, Mark} from '../ui.jsx';
-import { Coins, Gem, Bot, Users, Trophy, Zap, ArrowRight, Flame, Shield } from 'lucide-react';
+import { Coins, Gem, Bot, Users, Trophy, Zap, ArrowRight, Flame, Shield, Swords } from 'lucide-react';
 
 const REWARDS = [
   { label: 'Win a series', xp: 50, coins: 10 },
@@ -154,6 +154,10 @@ export default function HomeScreen({
                     Find opponent
                     <ArrowRight size={16} aria-hidden="true" />
                   </button>
+                  <button type="button" className="btn btn-quiet" onClick={() => onNavigate('play', { mode: 'casual' })}>
+                    <Swords size={16} aria-hidden="true" />
+                    Play a casual duel
+                  </button>
                   <button type="button" className="btn btn-quiet" onClick={() => onNavigate('play', { mode: 'private' })}>
                     <Users size={16} aria-hidden="true" />
                     Play a friend instead
@@ -219,6 +223,12 @@ export default function HomeScreen({
               ) : (
                 <p className="mode-copy">No bracket is running. Create an 8-player knockout and wait for challengers.</p>
               )}
+              <div className="fact-chips">
+                <Chip tone="neutral">8 players</Chip>
+                <Chip tone="neutral">Single elimination</Chip>
+                <Chip tone="neutral">No rating change</Chip>
+              </div>
+              <p className="panel-note">Champion takes 500 coins and 50 gems. Runner-up and semifinalists also place.</p>
               <button type="button" className="btn btn-ghost" onClick={() => (openTournament ? onOpenTournament(openTournament.id) : onNavigate('tournaments'))}>
                 <Trophy size={15} aria-hidden="true" />
                 {openTournament ? 'Open the bracket' : 'Go to tournaments'}
@@ -240,7 +250,15 @@ export default function HomeScreen({
                 <div className="mode-icon" aria-hidden="true"><Shield size={20} /></div>
                 <h2 id="home-secure-title" className="mode-title">Server-run matches</h2>
                 <p className="mode-copy">The browser never picks a result. Moves, turns, rewards and ratings are validated on the server.</p>
-                <p className="panel-note"><Shield size={13} aria-hidden="true" /> Every series is recorded once, with no client-side payout.</p>
+                <ul className="rail-list">
+                  <li>Every move, turn and reward is validated on the server.</li>
+                  <li>A series is written once, with no client-side payout.</li>
+                  <li>Rewards settle through the same ledger as purchases.</li>
+                </ul>
+                <button type="button" className="btn btn-quiet rail-link" onClick={() => onNavigate('play')}>
+                  How a series runs
+                  <ArrowRight size={14} aria-hidden="true" />
+                </button>
               </section>
             )}
           </div>
