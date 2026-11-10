@@ -145,8 +145,19 @@ class RoomManager {
       return;
     }
 
-    const disconnected = room.players.filter((player) => !player.connected);
+    const disconnected = room.players.filter((player) => !player.connected && Number.isFinite(player.disconnectedAt));
+    const notArrived = room.players.filter((player) => !player.connected && !Number.isFinite(player.disconnectedAt));
+
+    // A pre-seated tournament opponent has never entered the room: that is a
+    // waiting seat, not a disconnect. Only a player who was present and then
+    // dropped gets the 30-second forfeit clock.
     if (disconnected.length === 0) {
+      if (notArrived.length > 0) {
+        room.state.status = 'waiting';
+        room.state.disconnectDeadline = null;
+        room.resumeStatus = null;
+        return;
+      }
       const restored = room.resumeStatus || (room.state.status === 'paused' ? 'active' : room.state.status);
       room.state.status = restored === 'waiting' ? 'active' : restored;
       room.state.disconnectDeadline = null;

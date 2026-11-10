@@ -32,3 +32,8 @@ server/tic-tac.db
 *.njsproj
 *.sln
 *.sw?
+
+# SQLite sidecars and local design-inspection output
+*.db-shm
+*.db-wal
+.taste-skill/

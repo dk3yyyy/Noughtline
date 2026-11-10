@@ -317,3 +317,22 @@ test('rejects invalid room configuration', () => {
   assert.equal(manager.createRoom('ROOM_BIG', { size: 100, rounds: 3 }).error, 'Unsupported board size');
   assert.equal(manager.createRoom('ROOM_EVEN', { size: 3, rounds: 10 }).error, 'Rounds must be 1, 3, or 5');
 });
+
+
+test('a pre-seated tournament opponent who has never arrived waits instead of pausing', () => {
+  const manager = new RoomManager();
+  assert.ok(manager.createRoom('ROOM_PRESEATED', { size: 3, rounds: 1 }).room);
+  const room = manager.getRoom('ROOM_PRESEATED');
+  room.players.push(
+    { id: 11, socketId: null, connected: false, username: 'X', avatar: null, symbol: 'X' },
+    { id: 12, socketId: null, connected: false, username: 'O', avatar: null, symbol: 'O' },
+  );
+
+  const first = manager.joinRoom('ROOM_PRESEATED', { userId: 11, socketId: 'x1', username: 'X' }).room;
+  assert.equal(first.state.status, 'waiting');
+  assert.equal(first.state.disconnectDeadline, null);
+
+  const second = manager.joinRoom('ROOM_PRESEATED', { userId: 12, socketId: 'o1', username: 'O' }).room;
+  assert.equal(second.state.status, 'active');
+  assert.equal(second.state.disconnectDeadline, null);
+});
