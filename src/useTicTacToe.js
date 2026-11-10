@@ -91,7 +91,19 @@ export default function useTicTacToe(gameConfig, setGameConfig, sounds, user) {
       socket.on('game_error', handleGameError);
       if (roomSnapshot?.id === roomId) handleRoomUpdate(roomSnapshot);
 
+      // The room can advance between the join ack and this listener mounting
+      // (the opponent's first move, a forfeit, a reconnect). Pull the current
+      // room once after subscribing so a missed broadcast can never leave the
+      // board stale.
+      const refreshTimer = window.setTimeout(() => {
+        socket.timeout(6000).emit('resume_room', { roomId }, (timeoutError, result) => {
+          if (timeoutError || !result?.room) return;
+          handleRoomUpdate(result.room);
+        });
+      }, 0);
+
       return () => {
+        window.clearTimeout(refreshTimer);
         socket.off('room_update', handleRoomUpdate);
         socket.off('game_error', handleGameError);
       };
