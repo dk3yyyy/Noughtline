@@ -777,15 +777,16 @@ export default function App() {
     }
   };
 
-  const handlePlayStranger = () => {
+  const handlePlayStranger = (requestedQueueType = 'ranked') => {
     if (searchingRef.current) return;
     if (!socket.connected) {
       setRecoveryMessage('Reconnect before joining the queue.');
       return;
     }
+    const queueType = ['ranked', 'casual'].includes(requestedQueueType) ? requestedQueueType : 'ranked';
     searchingRef.current = true;
     setIsSearching(true);
-    socket.timeout(10000).emit('find_match', {}, (timeoutError, result) => {
+    socket.timeout(10000).emit('find_match', { queueType }, (timeoutError, result) => {
       if (timeoutError) {
         searchingRef.current = false;
         setIsSearching(false);
@@ -1126,7 +1127,6 @@ export default function App() {
               onCopyInvite={handleCopyGameInvite}
               onStartPractice={startPractice}
               initialCode={inviteRoomId}
-              
             />
           )}
 

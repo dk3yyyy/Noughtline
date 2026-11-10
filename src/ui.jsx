@@ -249,4 +249,3 @@ export const ErrorNote = ({ children, onRetry }) => (
 export const Loading = ({ label = 'Loading…' }) => (
   <p className="loading-note" role="status">{label}</p>
 );
-

@@ -94,7 +94,7 @@ export default function PlayScreen({
       <header className="screen-head">
         <div>
           <h1>Play</h1>
-          <p className="screen-sub">Three ways to play: ranked matchmaking, a private room with a friend, or practice against the machine.</p>
+          <p className="screen-sub">Choose ranked or casual matchmaking, host a private room, or practice against the machine.</p>
         </div>
       </header>
 
@@ -105,10 +105,55 @@ export default function PlayScreen({
         onChange={onModeChange}
         options={[
           { value: 'ranked', label: 'Ranked duel', icon: Swords },
+          { value: 'casual', label: 'Casual duel', icon: Swords },
           { value: 'private', label: 'Private room', icon: Users },
           { value: 'practice', label: 'Practice vs AI', icon: Bot },
         ]}
       />
+
+      {mode === 'casual' && (
+        <div className="play-grid">
+          <section className="panel play-main" aria-labelledby="casual-title">
+            <div className="panel-head">
+              <div>
+                <h2 id="casual-title" className="panel-title">Casual duel</h2>
+                <p className="panel-sub">Play a standard 3 × 3, best-of-three series. Casual results do not change rating, stats, quests or currency.</p>
+              </div>
+              <Chip tone="neutral">No rewards</Chip>
+            </div>
+            <ul className="play-points">
+              <li><Check size={15} aria-hidden="true" /> Matched only with another casual player.</li>
+              <li><Check size={15} aria-hidden="true" /> Results are saved in match history.</li>
+              <li><Check size={15} aria-hidden="true" /> Leave or cancel without affecting your rating.</li>
+            </ul>
+            <div className="play-actions">
+              {searching ? (
+                <>
+                  <span className="queue-status" role="status">
+                    <span className="queue-dot" aria-hidden="true" />
+                    Searching the casual queue…
+                  </span>
+                  <button type="button" className="btn btn-ghost" onClick={onCancelSearch}>Cancel search</button>
+                </>
+              ) : (
+                <button type="button" className="btn btn-primary btn-lg" onClick={() => onFindMatch('casual')} disabled={!connected}>
+                  <Swords size={18} aria-hidden="true" />
+                  Find a casual opponent
+                </button>
+              )}
+              {!connected && <p className="field-note">Reconnect before entering the queue.</p>}
+            </div>
+          </section>
+          <aside className="play-rail">
+            <section className="panel rail-panel" aria-labelledby="casual-rules-title">
+              <div className="panel-head">
+                <h2 id="casual-rules-title" className="panel-title">Casual rules</h2>
+              </div>
+              <p className="rail-copy">Casual games still use the same server-validated turns and rematch rules. Your ranked rating and progression stay unchanged.</p>
+            </section>
+          </aside>
+        </div>
+      )}
 
       {mode === 'ranked' && (
         <div className="play-grid">

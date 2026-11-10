@@ -572,6 +572,7 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
       socketId: socket.id,
       username: socket.user.username,
       avatar: socket.user.avatar,
+      rating: socket.user.rating,
     });
     const replyTo = (callback) => (typeof callback === 'function' ? callback : () => {});
     const roomPayload = (payload) => (
@@ -734,15 +735,19 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
       return runGameAction(() => roomManager.requestRematch(roomId, socket.user.id, socket.id), callback);
     });
 
-    onSocket('find_match', (_payload, callback) => {
+    onSocket('find_match', (payload = {}, callback) => {
       if (!guardRoomAction(callback)) return;
+      const queueType = payload?.queueType || 'ranked';
+      if (!['ranked', 'casual'].includes(queueType)) {
+        return emitFailure({ error: 'Choose a ranked or casual queue', code: 'MATCHMAKING_QUEUE_INVALID' }, callback);
+      }
       const activeRoom = roomManager.findActiveRoomForUser(socket.user.id);
       if (activeRoom) return emitFailure({
         error: 'You already have an active room',
         code: 'ACTIVE_ROOM_EXISTS',
         roomId: activeRoom.id,
       }, callback);
-      const queued = matchmaker.addToQueue(socketPlayer());
+      const queued = matchmaker.addToQueue(socketPlayer(), queueType);
       if (!queued) return emitFailure({ error: 'You are already searching for a match', code: 'ALREADY_MATCHMAKING' }, callback);
       return replyTo(callback)({ queued: true });
     });
@@ -771,7 +776,9 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
       const match = matchmaker.findMatch(isMatchEligible);
       if (match) {
         const roomId = randomRoomId('MATCH_');
-        const created = roomManager.createRoom(roomId, { size: 3, rounds: 3 }, { rewardEligible: true });
+        const created = roomManager.createRoom(roomId, { size: 3, rounds: 3 }, {
+          rewardEligible: match.player1.queueType === 'ranked',
+        });
         if (created.error) {
           for (const player of [match.player1, match.player2]) matchmaker.addToQueue(player);
         } else {
