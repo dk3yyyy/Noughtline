@@ -75,6 +75,15 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
       ? null
       : room.players.find((player) => player.symbol === room.state.seriesWinner);
     const completionReason = roundHistory.at(-1)?.reason || 'played';
+    // A player can delete their account while a room is still open. Keep the
+    // result recordable for the opponent without violating player foreign keys.
+    const playerIds = room.players.map((player) => player.id);
+    const existingUserIds = new Set(playerIds.length === 0 ? [] : db.prepare(
+      `SELECT id FROM users WHERE id IN (${playerIds.map(() => '?').join(',')})`,
+    ).all(...playerIds).map((row) => row.id));
+    const playerXId = playerX && existingUserIds.has(playerX.id) ? playerX.id : null;
+    const playerOId = playerO && existingUserIds.has(playerO.id) ? playerO.id : null;
+    const winnerId = winner && existingUserIds.has(winner.id) ? winner.id : null;
 
     db.prepare(`
       INSERT INTO series_results
@@ -83,9 +92,9 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
     `).run(
       room.seriesId,
       room.id,
-      playerX?.id || null,
-      playerO?.id || null,
-      winner?.id || null,
+      playerXId,
+      playerOId,
+      winnerId,
       room.state.seriesWinner,
       room.state.score.X,
       room.state.score.O,
@@ -101,6 +110,7 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
     const questDay = completionReason === 'played' ? questService.currentDay() : null;
 
     for (const player of room.players) {
+      if (!existingUserIds.has(player.id)) continue;
       const isDraw = room.state.seriesWinner === 'Draw';
       const didWin = winner?.id === player.id;
       const forfeited = ['disconnect_forfeit', 'voluntary_forfeit'].includes(completionReason) && !didWin;
@@ -144,7 +154,7 @@ function createRuntime({ config, database, fetchImpl, startTimers = true, google
     // both players' pre-match ratings before writing either so the deltas are
     // computed against the same baseline; the enclosing transaction keeps this
     // atomic with the results row and reward writes above.
-    if (completionReason === 'played' && room.players.length === 2 && playerX && playerO) {
+    if (completionReason === 'played' && room.players.length === 2 && playerXId && playerOId) {
       const ratingX = db.prepare('SELECT rating FROM users WHERE id = ?').get(playerX.id);
       const ratingO = db.prepare('SELECT rating FROM users WHERE id = ?').get(playerO.id);
       if (ratingX && ratingO && Number.isFinite(ratingX.rating) && Number.isFinite(ratingO.rating)) {

@@ -99,6 +99,9 @@ function createTournamentService({ db, economy, roomManager, now = () => Date.no
   // of surfacing (so a re-entrant finalize can never double-mint).
   const credit = (tournamentId, userId, currency, amount, placement) => {
     if (!Number.isSafeInteger(amount) || amount <= 0) return;
+    // A participant may delete their account before the bracket finalizes.
+    // Skip the missing recipient rather than aborting everyone's rewards.
+    if (!db.prepare('SELECT 1 FROM users WHERE id = ?').get(userId)) return;
     try {
       economy.changeBalance({
         userId,
